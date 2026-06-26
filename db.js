@@ -6,6 +6,7 @@ const sequelize = new Sequelize(
   process.env.DB_PASS || '',
   {
     host: process.env.DB_HOST || 'localhost',
+    port: process.env.DB_PORT || 3306,
     dialect: 'mysql',
     logging: false,
     pool: { max: 5, min: 0, acquire: 30000, idle: 10000 }
@@ -31,7 +32,13 @@ const Lead = sequelize.define('Lead', {
   category:      { type: DataTypes.STRING(100) },
   business_type: { type: DataTypes.STRING(150) },
   source:        { type: DataTypes.STRING(100) },
-  status:        { type: DataTypes.ENUM('pending','called','interested','not_interested','callback','busy','no_answer','converted','invalid'), defaultValue: 'pending' },
+  status: {
+    type: DataTypes.ENUM(
+      'pending','called','interested','not_interested',
+      'callback','busy','no_answer','converted','invalid','meeting_scheduled'
+    ),
+    defaultValue: 'pending'
+  },
   assigned_to:   { type: DataTypes.INTEGER, allowNull: true },
   callback_date: { type: DataTypes.DATEONLY, allowNull: true },
   last_note:     { type: DataTypes.TEXT },
