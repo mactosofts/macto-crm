@@ -28,7 +28,7 @@ app.use('/api', apiRouter);
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 
 async function init() {
-  await sequelize.sync({ alter: true });
+  await sequelize.sync({ force: true });
   const admin = await User.findOne({ where: { role: 'admin' } });
   if (!admin) {
     const hash = await bcrypt.hash('admin123', 10);
