@@ -1,10 +1,9 @@
 {
-  "name": "macto-telecalling-crm",
-  "version": "1.0.0",
+  "name": "macto-crm-v2",
+  "version": "2.0.0",
+  "description": "Macto AI - Full Company CRM & Sales Pipeline",
   "main": "server.js",
-  "scripts": {
-    "start": "node server.js"
-  },
+  "scripts": { "start": "node server.js" },
   "dependencies": {
     "bcryptjs": "^2.4.3",
     "connect-session-sequelize": "^7.1.7",
