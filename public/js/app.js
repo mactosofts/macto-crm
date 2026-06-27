@@ -1985,3 +1985,382 @@ window.render = render; // keep reference
   // Re-run boot with new render
   window.boot();
 })();
+
+// ── PROPOSALS PAGE ────────────────────────────────────────────────
+async function renderProposals(container) {
+  container.innerHTML='<div class="loading-center"><div class="spinner"></div></div>';
+  const [propR, clientsR] = await Promise.all([api.get('/proposals'), api.get('/clients?limit=200')]);
+  const proposals = propR.ok ? propR.data : [];
+  const clients = clientsR.ok ? clientsR.data : [];
+  container.innerHTML='';
+  container.appendChild(app('div',{className:'page-title'},'📄 Proposals'));
+
+  const stats = {draft:0,sent:0,accepted:0,rejected:0};
+  proposals.forEach(p=>stats[p.status]=(stats[p.status]||0)+1);
+  const grid = h('div',{className:'stats-grid'});
+  [{label:'Drafts',val:stats.draft||0,color:'#94a3b8'},{label:'Sent',val:stats.sent||0,color:'#06b6d4'},{label:'Accepted ✓',val:stats.accepted||0,color:'#22c55e'},{label:'Rejected',val:stats.rejected||0,color:'#ef4444'}].forEach(c=>{
+    grid.appendChild(app('div',{className:'stat-card',style:`border-top-color:${c.color}`},app('div',{className:'stat-num',style:`color:${c.color}`},String(c.val)),app('div',{className:'stat-label'},c.label)));
+  });
+  container.appendChild(grid);
+
+  const addBtn = app('button',{className:'btn btn-primary',style:'margin-bottom:14px',onClick:()=>openCreateProposalModal(clients,()=>renderProposals(container))},'+  Create Proposal');
+  container.appendChild(addBtn);
+
+  const tw = app('div',{className:'table-wrap'},app('table',{},
+    app('thead',{},app('tr',{},...['Proposal No','Client','Project','Investment','Status','Actions'].map(c=>app('th',{},c)))),
+    app('tbody',{id:'prop-tbody'})
+  ));
+  const tbody = tw.querySelector('#prop-tbody');
+  if(!proposals.length){tbody.appendChild(app('tr',{className:'empty-row'},app('td',{colSpan:6},'No proposals yet.')));}
+  proposals.forEach(p=>{
+    const statusColors={draft:'#94a3b8',sent:'#06b6d4',accepted:'#22c55e',rejected:'#ef4444',revised:'#f59e0b'};
+    const sc = statusColors[p.status]||'#94a3b8';
+    const tr = app('tr',{},
+      app('td',{style:'font-family:monospace;font-weight:600;color:var(--accent2)'},p.proposal_no),
+      app('td',{className:'td-name'},p.Client?p.Client.name:'—'),
+      app('td',{style:'color:var(--muted2);font-size:12px'},p.project_title||'—'),
+      app('td',{style:'color:#4ade80;font-weight:700'},fmt(p.investment)),
+      app('td',{},app('span',{style:`background:${sc}22;color:${sc};padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600`},p.status.toUpperCase())),
+      app('td',{},app('div',{style:'display:flex;gap:4px'},
+        app('button',{className:'btn btn-ghost btn-xs',onClick:()=>openProposalPDF(p.id)},'📄 PDF'),
+        p.status==='draft'?app('button',{className:'btn btn-cyan btn-xs',onClick:async()=>{await api.put('/proposals/'+p.id,{status:'sent',sent_at:new Date()});renderProposals(container);}},'Send'):null,
+        p.status==='sent'?app('button',{className:'btn btn-success btn-xs',onClick:async()=>{await api.put('/proposals/'+p.id,{status:'accepted',accepted_at:new Date()});renderProposals(container);}},'✓ Accept'):null,
+        p.status==='sent'?app('button',{className:'btn btn-danger btn-xs',onClick:async()=>{await api.put('/proposals/'+p.id,{status:'rejected'});renderProposals(container);}},'Reject'):null,
+        app('button',{className:'btn btn-danger btn-xs',onClick:async()=>{if(!confirm('Delete?'))return;await api.del('/proposals/'+p.id);renderProposals(container);}},'Del')
+      ))
+    );
+    tbody.appendChild(tr);
+  });
+  container.appendChild(tw);
+}
+
+function openCreateProposalModal(clients, onSave) {
+  const mDiv = h('div',{});
+  const clientSel = h('select',{className:'inp'});
+  clientSel.appendChild(app('option',{value:''},'Select client *'));
+  clients.forEach(c=>clientSel.appendChild(app('option',{value:c.id},c.name+(c.company?' — '+c.company:''))));
+
+  const projTitle = h('input',{type:'text',className:'inp',placeholder:'e.g. E-commerce Web Application for ABC Store'});
+  const overview = h('textarea',{className:'inp',rows:3,placeholder:'Brief overview of the project and what problem it solves...'});
+  const investment = h('input',{type:'number',className:'inp',placeholder:'Total investment ₹'});
+  const timeline = h('input',{type:'number',className:'inp',value:'6',placeholder:'Timeline in weeks'});
+  const paymentTerms = h('textarea',{className:'inp',rows:2,placeholder:'e.g. 50% advance, 50% on delivery'});
+  const validity = h('input',{type:'number',className:'inp',value:'30',placeholder:'Validity in days'});
+  const whyUs = h('textarea',{className:'inp',rows:3,placeholder:'Why choose Macto AI? Our experience, portfolio, support...'});
+
+  // Scope items
+  const scopeItems = [{title:'Discovery & Planning',description:'Requirements gathering, wireframes, project plan'},{title:'Design',description:'UI/UX design, mobile-responsive layouts'},{title:'Development',description:'Full-stack development with modern technologies'},{title:'Testing & QA',description:'Thorough testing across devices and browsers'},{title:'Deployment & Launch',description:'Live deployment, domain setup, SSL certificate'},{title:'Training & Handover',description:'Admin training, documentation, 30 days support'}];
+  const scopeDiv = h('div',{});
+
+  function renderScope(){
+    scopeDiv.innerHTML='';
+    scopeItems.forEach((item,i)=>{
+      const row = app('div',{style:'display:grid;grid-template-columns:1fr 1.5fr auto;gap:6px;margin-bottom:6px;align-items:start'});
+      const tI = h('input',{type:'text',className:'inp inp-sm',value:item.title,placeholder:'Phase/Item'});
+      const dI = h('input',{type:'text',className:'inp inp-sm',value:item.description,placeholder:'Description'});
+      const del = app('button',{className:'btn btn-danger btn-xs',onClick:()=>{scopeItems.splice(i,1);renderScope();}},'✕');
+      tI.addEventListener('input',()=>scopeItems[i].title=tI.value);
+      dI.addEventListener('input',()=>scopeItems[i].description=dI.value);
+      row.append(tI,dI,del);
+      scopeDiv.appendChild(row);
+    });
+  }
+  renderScope();
+
+  // Investment breakdown
+  const breakItems = [{item:'Design & UI/UX',amount:0},{item:'Frontend Development',amount:0},{item:'Backend Development',amount:0},{item:'Testing & Deployment',amount:0},{item:'Post-launch Support',amount:0}];
+  const breakDiv = h('div',{});
+
+  function renderBreak(){
+    breakDiv.innerHTML='';
+    breakItems.forEach((item,i)=>{
+      const row = app('div',{style:'display:grid;grid-template-columns:1.5fr 1fr auto;gap:6px;margin-bottom:6px;align-items:center'});
+      const iI = h('input',{type:'text',className:'inp inp-sm',value:item.item,placeholder:'Item'});
+      const aI = h('input',{type:'number',className:'inp inp-sm',value:item.amount||0,placeholder:'₹'});
+      const del = app('button',{className:'btn btn-danger btn-xs',onClick:()=>{breakItems.splice(i,1);renderBreak();}},'✕');
+      iI.addEventListener('input',()=>breakItems[i].item=iI.value);
+      aI.addEventListener('input',()=>{breakItems[i].amount=parseFloat(aI.value)||0;const total=breakItems.reduce((s,b)=>s+(b.amount||0),0);investment.value=total;});
+      row.append(iI,aI,del);
+      breakDiv.appendChild(row);
+    });
+  }
+  renderBreak();
+
+  const modal = app('div',{className:'modal-overlay center',onClick:(e)=>{if(e.target===modal)modal.remove();}},
+    app('div',{className:'modal center-modal wide-modal',style:'max-width:720px'},
+      app('div',{className:'modal-header'},app('span',{className:'modal-title'},'📄 Create Proposal'),app('button',{className:'modal-close',onClick:()=>modal.remove()},'✕')),
+      mDiv,
+      app('div',{className:'form-grid',style:'margin-bottom:10px'},
+        app('div',{className:'field',style:'margin:0'},app('label',{},'Client *'),clientSel),
+        app('div',{className:'field',style:'margin:0'},app('label',{},'Project Title'),projTitle)
+      ),
+      app('div',{className:'field'},app('label',{},'Project Overview'),overview),
+      app('div',{className:'section-label',style:'margin-bottom:6px'},'SCOPE OF WORK'),
+      scopeDiv,
+      app('button',{className:'btn btn-ghost btn-xs',style:'margin-bottom:12px',onClick:()=>{scopeItems.push({title:'',description:''});renderScope();}},'+ Add Scope Item'),
+      app('div',{className:'section-label',style:'margin-bottom:6px'},'INVESTMENT BREAKDOWN'),
+      breakDiv,
+      app('button',{className:'btn btn-ghost btn-xs',style:'margin-bottom:12px',onClick:()=>{breakItems.push({item:'',amount:0});renderBreak();}},'+ Add Item'),
+      app('div',{className:'form-grid',style:'margin-bottom:10px'},
+        app('div',{className:'field',style:'margin:0'},app('label',{},'Total Investment ₹'),investment),
+        app('div',{className:'field',style:'margin:0'},app('label',{},'Timeline (weeks)'),timeline)
+      ),
+      app('div',{className:'form-grid',style:'margin-bottom:10px'},
+        app('div',{className:'field',style:'margin:0'},app('label',{},'Payment Terms'),paymentTerms),
+        app('div',{className:'field',style:'margin:0'},app('label',{},'Proposal Validity (days)'),validity)
+      ),
+      app('div',{className:'field'},app('label',{},'Why Choose Macto AI?'),whyUs),
+      app('button',{className:'btn btn-primary',style:'width:100%;justify-content:center;margin-top:4px',onClick:async()=>{
+        if(!clientSel.value){mDiv.className='alert alert-error';mDiv.textContent='Select a client.';return;}
+        if(!projTitle.value){mDiv.className='alert alert-error';mDiv.textContent='Enter project title.';return;}
+        const r = await api.post('/proposals',{
+          client_id:parseInt(clientSel.value),
+          project_title:projTitle.value,
+          project_overview:overview.value,
+          scope_of_work:scopeItems,
+          investment:parseFloat(investment.value)||0,
+          investment_breakdown:breakItems,
+          timeline_weeks:parseInt(timeline.value)||6,
+          payment_terms:paymentTerms.value||'50% advance, 50% on delivery',
+          validity_days:parseInt(validity.value)||30,
+          why_us:whyUs.value||'5+ years experience, 100+ projects delivered, dedicated support team'
+        });
+        if(r.ok){modal.remove();if(onSave)onSave();}
+        else{mDiv.className='alert alert-error';mDiv.textContent=r.error;}
+      }},'Generate Proposal')
+    )
+  );
+  document.body.appendChild(modal);
+}
+
+async function openProposalPDF(propId) {
+  const r = await api.get('/proposals/'+propId);
+  if(!r.ok) return alert('Error loading proposal');
+  const p = r.data;
+  const client = p.Client || {};
+  const scope = p.scope_of_work || [];
+  const breakdown = p.investment_breakdown || [];
+  const validUntil = new Date(p.createdAt);
+  validUntil.setDate(validUntil.getDate()+(p.validity_days||30));
+
+  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Proposal ${p.proposal_no}</title><style>
+    *{margin:0;padding:0;box-sizing:border-box}
+    body{font-family:'Segoe UI',Arial,sans-serif;color:#1a1a2e;background:#fff}
+    .cover{background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;padding:60px 50px;min-height:280px;position:relative}
+    .cover-logo{font-size:28px;font-weight:900;margin-bottom:8px}
+    .cover-tagline{font-size:14px;opacity:0.8;margin-bottom:40px}
+    .cover-title{font-size:36px;font-weight:800;line-height:1.2;margin-bottom:12px}
+    .cover-sub{font-size:16px;opacity:0.9}
+    .cover-meta{position:absolute;bottom:40px;right:50px;text-align:right;font-size:13px;opacity:0.85}
+    .section{padding:40px 50px;border-bottom:1px solid #eee}
+    .section h2{font-size:20px;font-weight:800;color:#6366f1;margin-bottom:16px;padding-bottom:8px;border-bottom:2px solid #6366f122}
+    .client-box{background:#f8f9ff;border:1px solid #e0e0ff;border-radius:10px;padding:20px;margin-bottom:20px}
+    .client-name{font-size:22px;font-weight:800;color:#1a1a2e}
+    .client-info{color:#666;font-size:14px;margin-top:4px}
+    p{font-size:14px;line-height:1.7;color:#444;margin-bottom:12px}
+    .scope-item{display:flex;gap:16px;margin-bottom:16px;align-items:flex-start}
+    .scope-num{background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:13px;flex-shrink:0}
+    .scope-title{font-weight:700;font-size:14px;margin-bottom:4px}
+    .scope-desc{font-size:13px;color:#666}
+    table{width:100%;border-collapse:collapse}
+    th{background:#6366f1;color:#fff;padding:10px 14px;text-align:left;font-size:13px}
+    td{padding:10px 14px;border-bottom:1px solid #eee;font-size:13px}
+    tr:nth-child(even) td{background:#f9f9ff}
+    .total-row td{font-weight:800;font-size:16px;background:#f0f0ff;color:#6366f1}
+    .payment-box{background:#f0fff4;border:1px solid #86efac;border-radius:8px;padding:16px;margin-top:16px}
+    .why-item{display:flex;gap:10px;margin-bottom:10px;align-items:flex-start}
+    .why-icon{font-size:20px;flex-shrink:0}
+    .footer{background:#1a1a2e;color:#fff;padding:30px 50px;text-align:center}
+    .footer-logo{font-size:20px;font-weight:800;margin-bottom:6px}
+    .footer-info{font-size:13px;opacity:0.7}
+    .sign-box{border:1px solid #ddd;border-radius:8px;padding:20px;margin-top:16px;display:grid;grid-template-columns:1fr 1fr;gap:20px}
+    .sign-field{border-bottom:1px solid #999;padding-bottom:30px;margin-bottom:8px}
+    .sign-label{font-size:12px;color:#666}
+    .validity{background:#fff8e6;border:1px solid #fbbf24;border-radius:8px;padding:12px 16px;margin-top:16px;font-size:13px}
+    @media print{.no-print{display:none}body{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+  </style></head><body>
+  <div class="no-print" style="background:#f5f5f5;padding:12px;text-align:center;font-size:13px">
+    <button onclick="window.print()" style="background:#6366f1;color:#fff;border:none;padding:8px 20px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:600">🖨️ Print / Save as PDF</button>
+  </div>
+  <div class="cover">
+    <div class="cover-logo">🚀 Macto AI</div>
+    <div class="cover-tagline">Create. Deploy. Grow.</div>
+    <div class="cover-title">${p.project_title||'Web Development Proposal'}</div>
+    <div class="cover-sub">Prepared exclusively for ${client.name||''}${client.company?' — '+client.company:''}</div>
+    <div class="cover-meta">
+      Proposal No: <strong>${p.proposal_no}</strong><br>
+      Date: ${new Date(p.createdAt).toLocaleDateString('en-IN',{dateStyle:'long'})}<br>
+      Valid Until: ${validUntil.toLocaleDateString('en-IN',{dateStyle:'long'})}
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>Client Information</h2>
+    <div class="client-box">
+      <div class="client-name">${client.name||''}</div>
+      ${client.company?`<div class="client-info">🏢 ${client.company}</div>`:''}
+      ${client.phone?`<div class="client-info">📞 ${client.phone}</div>`:''}
+      ${client.email?`<div class="client-info">📧 ${client.email}</div>`:''}
+      ${client.city?`<div class="client-info">📍 ${client.city}${client.state?', '+client.state:''}</div>`:''}
+    </div>
+  </div>
+
+  ${p.project_overview?`<div class="section"><h2>Project Overview</h2><p>${p.project_overview.replace(/\n/g,'<br>')}</p></div>`:''}
+
+  ${scope.length?`<div class="section"><h2>Scope of Work</h2>${scope.map((s,i)=>`<div class="scope-item"><div class="scope-num">${i+1}</div><div><div class="scope-title">${s.title}</div><div class="scope-desc">${s.description}</div></div></div>`).join('')}</div>`:''}
+
+  <div class="section">
+    <h2>Investment</h2>
+    <table>
+      <thead><tr><th>#</th><th>Service / Component</th><th>Amount</th></tr></thead>
+      <tbody>
+        ${breakdown.map((b,i)=>`<tr><td>${i+1}</td><td>${b.item}</td><td>₹${Number(b.amount).toLocaleString('en-IN')}</td></tr>`).join('')}
+        <tr class="total-row"><td colspan="2"><strong>Total Investment</strong></td><td><strong>₹${Number(p.investment).toLocaleString('en-IN')}</strong></td></tr>
+      </tbody>
+    </table>
+    <div class="payment-box">
+      <strong>💳 Payment Terms:</strong><br>
+      ${p.payment_terms||'50% advance to start, 50% on project delivery'}
+    </div>
+    <div class="validity">⏰ <strong>This proposal is valid for ${p.validity_days||30} days</strong> from the date of issue (until ${validUntil.toLocaleDateString('en-IN',{dateStyle:'long'})}).</div>
+  </div>
+
+  <div class="section">
+    <h2>Timeline</h2>
+    <p>Estimated project completion: <strong>${p.timeline_weeks||6} weeks</strong> from advance payment and project kickoff.</p>
+  </div>
+
+  ${p.why_us?`<div class="section"><h2>Why Choose Macto AI?</h2><p>${p.why_us.replace(/\n/g,'<br>')}</p></div>`:''}
+
+  <div class="section">
+    <h2>Acceptance & Signature</h2>
+    <p>By signing below, the client agrees to the scope, investment, and terms outlined in this proposal.</p>
+    <div class="sign-box">
+      <div><div class="sign-field"></div><div class="sign-label">Client Signature & Date</div><div style="font-size:13px;margin-top:6px">${client.name||''}</div></div>
+      <div><div class="sign-field"></div><div class="sign-label">Macto AI Authorized Signature</div><div style="font-size:13px;margin-top:6px">Macto AI Team</div></div>
+    </div>
+  </div>
+
+  <div class="footer">
+    <div class="footer-logo">🚀 Macto AI</div>
+    <div class="footer-info">macto.in | Kerala, India | Create. Deploy. Grow.</div>
+    <div class="footer-info" style="margin-top:6px">Thank you for considering Macto AI for your digital transformation journey!</div>
+  </div>
+  </body></html>`;
+
+  const w = window.open('','_blank');
+  w.document.write(html);
+  w.document.close();
+  setTimeout(()=>w.print(),800);
+}
+
+// Inject proposals tab into the render override
+const _existingRender = window.render;
+window.render = function() {
+  _existingRender();
+  // Patch nav to add proposals after invoices
+  requestAnimationFrame(()=>{
+    const sidebar = document.querySelector('.sidebar');
+    if(!sidebar) return;
+    // Tab is handled via STATE.tab so we just need to ensure proposals renders
+  });
+};
+
+// Add proposals to the tab routing — patch the boot override
+const __prevBoot = window.boot;
+window.boot = async function() {
+  await checkSession();
+  // Override render one more time with proposals support
+  const baseRender = window.render;
+  window.render = function() {
+    const container = document.getElementById('app');
+    if (!STATE.user) { container.innerHTML = ''; container.appendChild(renderLogin()); return; }
+
+    const user = STATE.user;
+    const isAdmin = user.role === 'admin';
+    const isAuditor = user.role === 'auditor';
+    const isStaff = user.role === 'staff';
+
+    let tabs = [];
+    if (isAdmin) {
+      tabs = [
+        {section:'Overview'},{id:'dashboard',label:'Dashboard',icon:'dash'},{id:'revenue',label:'Revenue',icon:'money'},
+        {section:'Sales'},{id:'pipeline',label:'Pipeline',icon:'pipeline'},{id:'clients',label:'All Clients',icon:'users'},
+        {section:'Leads'},{id:'dialer',label:'📞 Dialer',icon:'phone'},{id:'leads',label:'All Leads',icon:'assign'},{id:'import',label:'Import',icon:'upload'},
+        {section:'Documents'},{id:'proposals',label:'📄 Proposals',icon:'audit'},{id:'invoices',label:'🧾 Invoices',icon:'money'},
+        {section:'Work'},{id:'tasks_admin',label:'✅ Tasks',icon:'check'},
+        {section:'Audits'},{id:'audits',label:'Audit Reports',icon:'audit'},
+        {section:'Insights'},{id:'analytics',label:'📈 Analytics',icon:'chart'},
+        {section:'Admin'},{id:'staff',label:'Team',icon:'users'},{id:'password',label:'🔐 Password',icon:'users'},
+      ];
+    } else if (isStaff) {
+      tabs = [
+        {section:'Calls'},{id:'dialer',label:'📞 Dialer',icon:'phone'},{id:'my_leads',label:'My Leads',icon:'assign'},
+        {section:'Clients'},{id:'my_clients',label:'My Clients',icon:'users'},{id:'followups',label:'Follow-ups',icon:'audit'},
+        {section:'Documents'},{id:'proposals',label:'📄 Proposals',icon:'audit'},{id:'invoices',label:'🧾 Invoices',icon:'money'},
+        {section:'Work'},{id:'my_tasks',label:'✅ My Tasks',icon:'check'},
+        {section:'Stats'},{id:'my_stats',label:'My Stats',icon:'chart'},{id:'password',label:'🔐 Password',icon:'users'},
+      ];
+    } else if (isAuditor) {
+      tabs = [
+        {section:'Audit'},{id:'audit_dash',label:'Dashboard',icon:'dash'},{id:'new_audit',label:'+ New Audit',icon:'plus'},{id:'my_audits',label:'My Audits',icon:'audit'},
+        {id:'password',label:'🔐 Password',icon:'users'},
+      ];
+    }
+
+    const flatTabs = tabs.filter(t => t.id);
+    if (!flatTabs.find(t => t.id === STATE.tab)) STATE.tab = flatTabs[0]?.id || 'dashboard';
+
+    const topbar = app('div',{className:'topbar'},
+      app('div',{className:'brand'},app('div',{className:'brand-logo'},'🚀 Macto AI CRM'),app('span',{className:`role-pill ${user.role}`},user.role.toUpperCase())),
+      app('div',{className:'topbar-right'},
+        app('span',{id:'notif-bell',className:'btn btn-ghost btn-sm',style:'position:relative'},'🔔'),
+        app('span',{className:'topbar-user'},'Hi, '+user.name),
+        app('button',{className:'btn btn-ghost btn-sm',onClick:async()=>{await api.post('/logout');STATE.user=null;window.render();}},'Logout')
+      )
+    );
+
+    const sidebar = app('div',{className:'sidebar'});
+    tabs.forEach(t=>{
+      if(t.section){sidebar.appendChild(app('div',{className:'nav-section'},t.section));}
+      else{const btn=app('button',{className:'nav-item'+(STATE.tab===t.id?' active':''),onClick:()=>{STATE.tab=t.id;window.render();}},icon(t.icon,15),t.label);sidebar.appendChild(btn);}
+    });
+
+    const mobileNav = app('div',{className:'sidebar-mobile'});
+    flatTabs.slice(0,5).forEach(t=>{
+      const btn=app('button',{className:'nav-item-mob'+(STATE.tab===t.id?' active':''),onClick:()=>{STATE.tab=t.id;window.render();}},icon(t.icon,18),t.label);
+      mobileNav.appendChild(btn);
+    });
+
+    const main = h('div',{className:'main',id:'main-content'});
+    container.innerHTML='';
+    container.appendChild(app('div',{},topbar,app('div',{className:'layout'},sidebar,main),mobileNav));
+
+    const bellBtn = document.getElementById('notif-bell');
+    if(bellBtn) loadNotifications(bellBtn);
+
+    requestAnimationFrame(()=>{
+      if(STATE.tab==='dashboard') renderAdminDash(main);
+      else if(STATE.tab==='revenue') renderRevenue(main);
+      else if(STATE.tab==='pipeline') renderPipeline(main);
+      else if(STATE.tab==='clients') renderAllClients(main);
+      else if(STATE.tab==='dialer') renderDialer(main);
+      else if(STATE.tab==='leads'||STATE.tab==='my_leads') { isStaff?renderMyLeads(main):renderAdminLeads(main); }
+      else if(STATE.tab==='import') renderImport(main);
+      else if(STATE.tab==='proposals') renderProposals(main);
+      else if(STATE.tab==='invoices') renderInvoices(main);
+      else if(STATE.tab==='tasks_admin'||STATE.tab==='my_tasks') renderTasks(main);
+      else if(STATE.tab==='audits'||STATE.tab==='my_audits') renderAudits(main,user.role);
+      else if(STATE.tab==='audit_dash') renderAuditDash(main);
+      else if(STATE.tab==='new_audit') renderNewAudit(main);
+      else if(STATE.tab==='analytics') renderAnalytics(main);
+      else if(STATE.tab==='staff') renderTeam(main);
+      else if(STATE.tab==='password') renderChangePassword(main);
+      else if(STATE.tab==='my_clients') renderMyClients(main);
+      else if(STATE.tab==='followups') renderFollowups(main);
+      else if(STATE.tab==='my_stats') renderMyStats(main);
+    });
+  };
+  window.render();
+};
+window.boot();
