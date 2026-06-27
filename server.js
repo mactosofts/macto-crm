@@ -16,7 +16,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 const sessionStore = new SequelizeStore({ db: sequelize });
 app.use(session({
-  secret: process.env.SESSION_SECRET || 'macto_crm_secret_2024',
+  secret: process.env.SESSION_SECRET || 'macto_crm_v2_secret',
   store: sessionStore,
   resave: false,
   saveUninitialized: false,
@@ -25,10 +25,7 @@ app.use(session({
 sessionStore.sync();
 
 app.use('/api', apiRouter);
-
-app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
+app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 
 async function init() {
   await sequelize.sync({ alter: true });
@@ -36,9 +33,8 @@ async function init() {
   if (!admin) {
     const hash = await bcrypt.hash('admin123', 10);
     await User.create({ name: 'Admin', username: 'admin', password: hash, role: 'admin' });
-    console.log('Admin created: admin / admin123');
+    console.log('✅ Admin: admin / admin123');
   }
-  app.listen(PORT, () => console.log(`Macto CRM running on port ${PORT}`));
+  app.listen(PORT, () => console.log(`🚀 Macto CRM v2 on port ${PORT}`));
 }
-
 init().catch(console.error);
