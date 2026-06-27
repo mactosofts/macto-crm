@@ -646,3 +646,73 @@ router.post('/whatsapp/send', apiAuth, async (req, res) => {
   } catch (e) { res.json({ ok: false, error: e.message }); }
 });
 
+
+// ── PROPOSALS ─────────────────────────────────────────────────────
+const Proposal = require('../db').Proposal || null;
+
+router.get('/proposals', apiAuth, async (req, res) => {
+  try {
+    const { Proposal } = require('../db');
+    const user = req.session.user;
+    const where = user.role === 'staff' ? { created_by: parseInt(user.id) } : {};
+    const proposals = await Proposal.findAll({
+      where, order: [['createdAt','DESC']],
+      include: [
+        { model: Client, attributes: ['id','name','phone','email','company','city'], required: false },
+        { model: User, as: 'createdBy', attributes: ['name'], required: false },
+      ]
+    });
+    res.json({ ok: true, data: proposals });
+  } catch (e) { res.json({ ok: false, error: e.message }); }
+});
+
+router.post('/proposals', apiAuth, async (req, res) => {
+  try {
+    const { Proposal } = require('../db');
+    const count = await Proposal.count();
+    const proposal_no = `MPROP-${new Date().getFullYear()}-${String(count+1).padStart(4,'0')}`;
+    const proposal = await Proposal.create({ ...req.body, proposal_no, created_by: parseInt(req.session.user.id) });
+    // Update client stage to proposal_shared
+    if (req.body.client_id) {
+      await Client.update({ pipeline_stage: 'proposal_shared' }, { where: { id: req.body.client_id } });
+      await ClientActivity.create({ client_id: req.body.client_id, user_id: parseInt(req.session.user.id), type: 'proposal', title: `Proposal ${proposal_no} created`, description: req.body.project_overview||'' });
+    }
+    res.json({ ok: true, data: proposal });
+  } catch (e) { res.json({ ok: false, error: e.message }); }
+});
+
+router.get('/proposals/:id', apiAuth, async (req, res) => {
+  try {
+    const { Proposal } = require('../db');
+    const proposal = await Proposal.findByPk(req.params.id, {
+      include: [
+        { model: Client, attributes: ['id','name','phone','email','company','city','state','website'], required: false },
+        { model: User, as: 'createdBy', attributes: ['name'], required: false }
+      ]
+    });
+    if (!proposal) return res.json({ ok: false, error: 'Not found' });
+    res.json({ ok: true, data: proposal });
+  } catch (e) { res.json({ ok: false, error: e.message }); }
+});
+
+router.put('/proposals/:id', apiAuth, async (req, res) => {
+  try {
+    const { Proposal } = require('../db');
+    const proposal = await Proposal.findByPk(req.params.id);
+    if (!proposal) return res.json({ ok: false, error: 'Not found' });
+    await proposal.update(req.body);
+    if (req.body.status === 'accepted' && proposal.client_id) {
+      await Client.update({ pipeline_stage: 'negotiation' }, { where: { id: proposal.client_id } });
+    }
+    res.json({ ok: true });
+  } catch (e) { res.json({ ok: false, error: e.message }); }
+});
+
+router.delete('/proposals/:id', apiAuth, async (req, res) => {
+  try {
+    const { Proposal } = require('../db');
+    await Proposal.destroy({ where: { id: req.params.id } });
+    res.json({ ok: true });
+  } catch (e) { res.json({ ok: false, error: e.message }); }
+});
+
