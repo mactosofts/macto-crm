@@ -716,3 +716,150 @@ router.delete('/proposals/:id', apiAuth, async (req, res) => {
   } catch (e) { res.json({ ok: false, error: e.message }); }
 });
 
+
+// ══════════════════════════════════════════════════════════════════
+// V5 — Enhanced Analytics, Assignment Dashboard, WhatsApp Docs
+// ══════════════════════════════════════════════════════════════════
+
+// ── LEAD ASSIGNMENT DASHBOARD ─────────────────────────────────────
+router.get('/leads/assignment-stats', apiAdmin, async (req, res) => {
+  try {
+    const users = await User.findAll({ where: { active: true, role: 'staff' }, attributes: ['id','name','username'] });
+    const totalLeads = await Lead.count();
+    const unassigned = await Lead.count({ where: { assigned_to: null } });
+    const assigned = totalLeads - unassigned;
+
+    const staffStats = await Promise.all(users.map(async u => {
+      const total = await Lead.count({ where: { assigned_to: u.id } });
+      const pending = await Lead.count({ where: { assigned_to: u.id, status: 'pending' } });
+      const called = await Lead.count({ where: { assigned_to: u.id, status: 'called' } });
+      const interested = await Lead.count({ where: { assigned_to: u.id, status: 'interested' } });
+      const not_interested = await Lead.count({ where: { assigned_to: u.id, status: 'not_interested' } });
+      const callback = await Lead.count({ where: { assigned_to: u.id, status: 'callback' } });
+      const now = new Date();
+      const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const todayCalls = await CallLog.count({ where: { staff_id: u.id, call_date: { [Op.gte]: todayStart } } });
+      // Last assignment date
+      const lastAssigned = await Lead.findOne({ where: { assigned_to: u.id }, order: [['updatedAt','DESC']], attributes: ['updatedAt'] });
+      return { id: u.id, name: u.name, username: u.username, total, pending, called, interested, not_interested, callback, todayCalls, lastAssigned: lastAssigned?.updatedAt, completion: total > 0 ? Math.round(((total-pending)/total)*100) : 0 };
+    }));
+
+    res.json({ ok: true, totalLeads, unassigned, assigned, staffStats });
+  } catch (e) { res.json({ ok: false, error: e.message }); }
+});
+
+// ── UNASSIGNED LEADS POOL ─────────────────────────────────────────
+router.get('/leads/unassigned', apiAdmin, async (req, res) => {
+  try {
+    const { category, source, search, page=1, limit=50 } = req.query;
+    const where = { assigned_to: null };
+    if (category && category !== 'all') where.category = category;
+    if (source && source !== 'all') where.source = source;
+    if (search) where[Op.or] = [{ name: { [Op.like]: `%${search}%` } }, { phone: { [Op.like]: `%${search}%` } }];
+    const offset = (parseInt(page)-1)*parseInt(limit);
+    const { count, rows } = await Lead.findAndCountAll({ where, limit: parseInt(limit), offset, order: [['createdAt','DESC']] });
+    res.json({ ok: true, data: rows, total: count, page: parseInt(page), pages: Math.ceil(count/parseInt(limit)) });
+  } catch (e) { res.json({ ok: false, error: e.message }); }
+});
+
+// ── STAFF LEAD DETAILS (for admin to drill down) ──────────────────
+router.get('/leads/by-staff/:staff_id', apiAdmin, async (req, res) => {
+  try {
+    const { status, page=1, limit=50 } = req.query;
+    const where = { assigned_to: parseInt(req.params.staff_id) };
+    if (status && status !== 'all') where.status = status;
+    const offset = (parseInt(page)-1)*parseInt(limit);
+    const { count, rows } = await Lead.findAndCountAll({ where, limit: parseInt(limit), offset, order: [['updatedAt','DESC']] });
+    const staff = await User.findByPk(req.params.staff_id, { attributes: ['id','name','username'] });
+    res.json({ ok: true, data: rows, total: count, staff, page: parseInt(page), pages: Math.ceil(count/parseInt(limit)) });
+  } catch (e) { res.json({ ok: false, error: e.message }); }
+});
+
+// ── ENHANCED ANALYTICS ────────────────────────────────────────────
+router.get('/analytics/staff-performance', apiAdmin, async (req, res) => {
+  try {
+    const users = await User.findAll({ where: { active: true, role: ['staff','admin'] }, attributes: ['id','name','role'] });
+    const now = new Date();
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const lastMonthStart = new Date(now.getFullYear(), now.getMonth()-1, 1);
+    const lastMonthEnd = new Date(now.getFullYear(), now.getMonth(), 1);
+
+    const staffPerf = await Promise.all(users.map(async u => {
+      const totalCalls = await CallLog.count({ where: { staff_id: u.id } });
+      const monthCalls = await CallLog.count({ where: { staff_id: u.id, call_date: { [Op.gte]: monthStart } } });
+      const lastMonthCalls = await CallLog.count({ where: { staff_id: u.id, call_date: { [Op.between]: [lastMonthStart, lastMonthEnd] } } });
+      const totalLeads = await Lead.count({ where: { assigned_to: u.id } });
+      const interested = await Lead.count({ where: { assigned_to: u.id, status: 'interested' } });
+      const converted = await Client.count({ where: { assigned_to: u.id, pipeline_stage: { [Op.in]: ['converted','work_started','in_progress','deployed','completed'] } } });
+      const revenue = await Client.sum('total_received', { where: { assigned_to: u.id } }) || 0;
+      const monthRevenue = await Invoice.sum('total', { where: { created_by: u.id, status: 'paid', createdAt: { [Op.gte]: monthStart } } }) || 0;
+      const pendingTasks = await Task.count({ where: { assigned_to: u.id, status: { [Op.in]: ['pending','in_progress'] } } });
+      const doneTasks = await Task.count({ where: { assigned_to: u.id, status: 'done' } });
+      const convRate = totalLeads > 0 ? ((interested/totalLeads)*100).toFixed(1) : 0;
+      const callTrend = lastMonthCalls > 0 ? Math.round(((monthCalls-lastMonthCalls)/lastMonthCalls)*100) : 0;
+      return { id: u.id, name: u.name, role: u.role, totalCalls, monthCalls, lastMonthCalls, callTrend, totalLeads, interested, converted, revenue, monthRevenue, pendingTasks, doneTasks, convRate };
+    }));
+
+    res.json({ ok: true, data: staffPerf });
+  } catch (e) { res.json({ ok: false, error: e.message }); }
+});
+
+router.get('/analytics/overview', apiAdmin, async (req, res) => {
+  try {
+    const now = new Date();
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const weekStart = new Date(now); weekStart.setDate(weekStart.getDate()-7);
+
+    const totalLeads = await Lead.count();
+    const unassigned = await Lead.count({ where: { assigned_to: null } });
+    const todayImported = await Lead.count({ where: { createdAt: { [Op.gte]: todayStart } } });
+    const totalClients = await Client.count();
+    const activeClients = await Client.count({ where: { pipeline_stage: { [Op.notIn]: ['completed','lost'] } } });
+    const totalRevenue = await Client.sum('total_received') || 0;
+    const monthRevenue = await Invoice.sum('total', { where: { status: 'paid', createdAt: { [Op.gte]: monthStart } } }) || 0;
+    const pendingInvoices = await Invoice.count({ where: { status: 'sent' } });
+    const pendingInvoiceValue = await Invoice.sum('total', { where: { status: 'sent' } }) || 0;
+    const totalCalls = await CallLog.count();
+    const todayCalls = await CallLog.count({ where: { call_date: { [Op.gte]: todayStart } } });
+    const weekCalls = await CallLog.count({ where: { call_date: { [Op.gte]: weekStart } } });
+    const totalProposals = await (require('../db').Proposal ? require('../db').Proposal.count() : Promise.resolve(0));
+    const acceptedProposals = await (require('../db').Proposal ? require('../db').Proposal.count({ where: { status: 'accepted' } }) : Promise.resolve(0));
+    const pendingTasks = await Task.count({ where: { status: { [Op.in]: ['pending','in_progress'] } } });
+    const overdueTasks = await Task.count({ where: { status: { [Op.in]: ['pending','in_progress'] }, due_date: { [Op.lt]: todayStart } } });
+
+    res.json({ ok: true, totalLeads, unassigned, todayImported, totalClients, activeClients, totalRevenue, monthRevenue, pendingInvoices, pendingInvoiceValue, totalCalls, todayCalls, weekCalls, totalProposals, acceptedProposals, pendingTasks, overdueTasks });
+  } catch (e) { res.json({ ok: false, error: e.message }); }
+});
+
+// ── WHATSAPP SEND DOCUMENT LINK ───────────────────────────────────
+router.post('/whatsapp/send-document-link', apiAuth, async (req, res) => {
+  try {
+    const { phone, type, doc_no, amount, client_name, client_id } = req.body;
+    const WABA_TOKEN = process.env.WHATSAPP_TOKEN;
+    const PHONE_ID = process.env.WHATSAPP_PHONE_ID;
+    if (!WABA_TOKEN || !PHONE_ID) return res.json({ ok: false, error: 'WhatsApp not configured. Add WHATSAPP_TOKEN and WHATSAPP_PHONE_ID to Railway Variables.' });
+
+    let message = '';
+    if (type === 'proposal') {
+      message = `Hello ${client_name}! 🙏\n\nThank you for your time. Please find our proposal *${doc_no}* attached for your review.\n\n*Investment: ₹${Number(amount).toLocaleString('en-IN')}*\n\nThis proposal is valid for 30 days. Please feel free to reach out if you have any questions.\n\nWarm regards,\n*Macto AI Team* 🚀\nCreate. Deploy. Grow.\nmacto.in`;
+    } else if (type === 'invoice') {
+      message = `Hello ${client_name}! 🙏\n\nYour invoice *${doc_no}* is ready.\n\n*Amount Due: ₹${Number(amount).toLocaleString('en-IN')}*\n\nKindly process the payment at your earliest convenience. Thank you for choosing Macto AI!\n\nWarm regards,\n*Macto AI Team* 🚀\nCreate. Deploy. Grow.`;
+    }
+
+    const cleanPhone = phone.replace(/[^0-9]/g,'');
+    const r = await fetch(`https://graph.facebook.com/v18.0/${PHONE_ID}/messages`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${WABA_TOKEN}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messaging_product: 'whatsapp', to: cleanPhone, type: 'text', text: { body: message } })
+    });
+    const data = await r.json();
+    if (data.messages) {
+      if (client_id) {
+        await ClientActivity.create({ client_id: parseInt(client_id), user_id: parseInt(req.session.user.id), type: 'whatsapp', title: `WhatsApp: ${type === 'proposal' ? 'Proposal' : 'Invoice'} ${doc_no} sent`, description: message });
+      }
+      res.json({ ok: true });
+    } else { res.json({ ok: false, error: data.error?.message || 'WhatsApp send failed' }); }
+  } catch (e) { res.json({ ok: false, error: e.message }); }
+});
+
