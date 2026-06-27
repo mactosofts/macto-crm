@@ -28,13 +28,10 @@ app.use('/api', apiRouter);
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 
 async function init() {
-  await sequelize.sync({ force: true });
-  const admin = await User.findOne({ where: { role: 'admin' } });
-  if (!admin) {
-    const hash = await bcrypt.hash('admin123', 10);
-    await User.create({ name: 'Admin', username: 'admin', password: hash, role: 'admin' });
-    console.log('✅ Admin: admin / admin123');
-  }
-  app.listen(PORT, () => console.log(`🚀 Macto CRM v2 on port ${PORT}`));
+  await sequelize.sync({ force: true }); // First run — creates all tables fresh
+  const hash = await bcrypt.hash('admin123', 10);
+  await User.create({ name: 'Admin', username: 'admin', password: hash, role: 'admin' });
+  console.log('✅ Macto AI CRM v2 Ready — admin/admin123');
+  app.listen(PORT, () => console.log(`🚀 Running on port ${PORT}`));
 }
 init().catch(console.error);
