@@ -118,7 +118,6 @@ const Task = sequelize.define('Task', {
   assigned_to: { type: DataTypes.INTEGER, allowNull: false },
   created_by:  { type: DataTypes.INTEGER, allowNull: false },
   client_id:   { type: DataTypes.INTEGER, allowNull: true },
-  lead_id:     { type: DataTypes.INTEGER, allowNull: true },
   due_date:    { type: DataTypes.DATEONLY, allowNull: true },
   priority:    { type: DataTypes.ENUM('low','medium','high','urgent'), defaultValue: 'medium' },
   status:      { type: DataTypes.ENUM('pending','in_progress','done','cancelled'), defaultValue: 'pending' },
@@ -141,6 +140,28 @@ const Invoice = sequelize.define('Invoice', {
   paid_at:     { type: DataTypes.DATE, allowNull: true },
 }, { tableName: 'invoices', timestamps: true });
 
+const Proposal = sequelize.define('Proposal', {
+  id:               { type: DataTypes.INTEGER, autoIncrement: true, primaryKey: true },
+  proposal_no:      { type: DataTypes.STRING(50), allowNull: false, unique: true },
+  client_id:        { type: DataTypes.INTEGER, allowNull: false },
+  created_by:       { type: DataTypes.INTEGER, allowNull: false },
+  project_title:    { type: DataTypes.STRING(255) },
+  project_overview: { type: DataTypes.TEXT },
+  scope_of_work:    { type: DataTypes.JSON }, // [{title, description}]
+  deliverables:     { type: DataTypes.JSON }, // [string]
+  timeline_weeks:   { type: DataTypes.INTEGER, defaultValue: 4 },
+  timeline_details: { type: DataTypes.JSON }, // [{week, task}]
+  investment:       { type: DataTypes.DECIMAL(12,2), defaultValue: 0 },
+  investment_breakdown: { type: DataTypes.JSON }, // [{item, amount}]
+  payment_terms:    { type: DataTypes.TEXT },
+  why_us:           { type: DataTypes.TEXT },
+  terms:            { type: DataTypes.TEXT },
+  validity_days:    { type: DataTypes.INTEGER, defaultValue: 30 },
+  status:           { type: DataTypes.ENUM('draft','sent','accepted','rejected','revised'), defaultValue: 'draft' },
+  sent_at:          { type: DataTypes.DATE, allowNull: true },
+  accepted_at:      { type: DataTypes.DATE, allowNull: true },
+}, { tableName: 'proposals', timestamps: true });
+
 const Notification = sequelize.define('Notification', {
   id:      { type: DataTypes.INTEGER, autoIncrement: true, primaryKey: true },
   user_id: { type: DataTypes.INTEGER, allowNull: false },
@@ -151,6 +172,7 @@ const Notification = sequelize.define('Notification', {
   link:    { type: DataTypes.STRING(255), allowNull: true },
 }, { tableName: 'notifications', timestamps: true });
 
+// Associations
 Lead.belongsTo(User, { as: 'assignedStaff', foreignKey: 'assigned_to' });
 Client.belongsTo(User, { as: 'assignedStaff', foreignKey: 'assigned_to' });
 Client.belongsTo(User, { as: 'managedBy', foreignKey: 'managed_by' });
@@ -166,6 +188,8 @@ Task.belongsTo(User, { as: 'createdBy', foreignKey: 'created_by' });
 Task.belongsTo(Client, { foreignKey: 'client_id' });
 Invoice.belongsTo(Client, { foreignKey: 'client_id' });
 Invoice.belongsTo(User, { as: 'createdBy', foreignKey: 'created_by' });
+Proposal.belongsTo(Client, { foreignKey: 'client_id' });
+Proposal.belongsTo(User, { as: 'createdBy', foreignKey: 'created_by' });
 Notification.belongsTo(User, { foreignKey: 'user_id' });
 
-module.exports = { sequelize, User, Lead, Client, ClientActivity, CallLog, Audit, Task, Invoice, Notification };
+module.exports = { sequelize, User, Lead, Client, ClientActivity, CallLog, Audit, Task, Invoice, Proposal, Notification };
