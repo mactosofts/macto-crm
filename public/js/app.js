@@ -940,12 +940,7 @@ async function renderManageImports(container) {
   const mDiv = el('div',{});
   container.appendChild(mDiv);
 
-  const batches = (batchR.ok ? batchR.data : []).map(b => ({
-    date: b.date || b['DATE(`createdAt`)'] || Object.values(b)[0] || '—',
-    source: b.source || 'import',
-    count: parseInt(b.count || b.cnt || 0),
-    unassigned: parseInt(b.unassigned || 0)
-  }));
+  const batches = batchR.ok ? batchR.data : [];
   const totalLeads = leadsR.total || 0;
 
   // Summary cards
