@@ -365,22 +365,21 @@ router.get('/leads/:id/logs', apiAuth, async (req, res) => {
 
 router.get('/leads/batches', apiAdmin, async (req, res) => {
   try {
-    const batches = await Lead.findAll({
-      attributes: [
-        [sequelize.fn('DATE', sequelize.col('createdAt')), 'date'],
-        'source',
-        [sequelize.fn('COUNT', sequelize.col('id')), 'count'],
-        [sequelize.fn('SUM', sequelize.literal('CASE WHEN assigned_to IS NULL THEN 1 ELSE 0 END')), 'unassigned']
-      ],
-      group: [sequelize.fn('DATE', sequelize.col('createdAt')), 'source'],
-      order: [[sequelize.fn('DATE', sequelize.col('createdAt')), 'DESC']]
-    });
-    // Return clean plain objects
-    const data = batches.map(b => ({
-      date: b.getDataValue('date') || '',
-      source: b.getDataValue('source') || 'import',
-      count: parseInt(b.getDataValue('count') || 0),
-      unassigned: parseInt(b.getDataValue('unassigned') || 0)
+    const [results] = await sequelize.query(`
+      SELECT 
+        DATE(createdAt) as date,
+        source,
+        COUNT(id) as count,
+        SUM(CASE WHEN assigned_to IS NULL THEN 1 ELSE 0 END) as unassigned
+      FROM leads
+      GROUP BY DATE(createdAt), source
+      ORDER BY DATE(createdAt) DESC
+    `);
+    const data = results.map(r => ({
+      date: r.date ? String(r.date).slice(0,10) : '',
+      source: r.source || 'import',
+      count: parseInt(r.count || 0),
+      unassigned: parseInt(r.unassigned || 0)
     }));
     res.json({ ok: true, data });
   } catch (e) { res.json({ ok: false, error: e.message }); }
