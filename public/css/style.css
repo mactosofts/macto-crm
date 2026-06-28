@@ -868,3 +868,17 @@ a.tel-link { color: var(--accent2); font-family: monospace; font-size: 16px; tex
 }
 .empty-state .empty-icon { font-size: 48px; margin-bottom: 16px; opacity: 0.5; }
 .empty-state p { font-size: 14px; margin-top: 8px; }
+
+/* ── TOAST ANIMATION ───────────────────────────────────────────── */
+@keyframes slideIn {
+  from { opacity: 0; transform: translateX(20px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+/* ── LEAD SCORE BADGE ──────────────────────────────────────────── */
+.score-hot  { background:#22c55e22;color:#22c55e;border-radius:4px;padding:1px 6px;font-size:10px;font-weight:700; }
+.score-warm { background:#f59e0b22;color:#f59e0b;border-radius:4px;padding:1px 6px;font-size:10px;font-weight:700; }
+
+/* ── SEARCH BAR ────────────────────────────────────────────────── */
+.topbar input[type=search]::-webkit-search-cancel-button { display:none; }
+.topbar input[type=search]::placeholder { color: var(--muted); }
