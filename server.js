@@ -14,21 +14,15 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
 
-app.use('/api', apiRouter);
-app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
-
 async function init() {
   try {
-    // Step 1 — sync all database tables
     await sequelize.sync({ force: true });
     console.log('✅ Database tables created');
 
-    // Step 2 — setup session store AFTER tables exist
     const sessionStore = new SequelizeStore({ db: sequelize });
     await sessionStore.sync();
     console.log('✅ Session store ready');
 
-    // Step 3 — apply session middleware
     app.use(session({
       secret: process.env.SESSION_SECRET || 'macto_crm_v2_secret',
       store: sessionStore,
@@ -37,7 +31,9 @@ async function init() {
       cookie: { maxAge: 7 * 24 * 60 * 60 * 1000, httpOnly: true }
     }));
 
-    // Step 4 — create default admin
+    app.use('/api', apiRouter);
+    app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
+
     const existing = await User.findOne({ where: { username: 'admin' } });
     if (!existing) {
       const hash = await bcrypt.hash('admin123', 10);
@@ -45,7 +41,6 @@ async function init() {
       console.log('✅ Admin created: admin / admin123');
     }
 
-    // Step 5 — start server
     app.listen(PORT, () => console.log(`🚀 Macto AI CRM running on port ${PORT}`));
 
   } catch (err) {
