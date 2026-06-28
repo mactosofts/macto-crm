@@ -1752,4 +1752,4 @@ function openWhatsAppModal(phone, clientId, clientName, onSent) {
   );
   document.body.appendChild(overlay);
 }
-
+boot();
