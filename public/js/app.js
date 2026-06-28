@@ -940,12 +940,19 @@ async function renderManageImports(container) {
   const mDiv = el('div',{style:'margin-bottom:12px'});
   container.appendChild(mDiv);
 
+  // Show API response for debugging
   if(!batchR.ok) {
-    container.appendChild(alertEl('error', 'Failed to load batches: '+(batchR.error||'Unknown error')));
+    container.appendChild(alertEl('error', 'API Error: '+(batchR.error||'Unknown')+' — Status: '+(batchR.ok)));
+    container.appendChild(el('div',{className:'card',style:'margin-top:12px'},
+      el('div',{style:'font-size:12px;color:var(--muted);font-family:monospace'},JSON.stringify(batchR).slice(0,500))
+    ));
     return;
   }
 
-  const batches = batchR.data || [];
+  const batches = Array.isArray(batchR.data) ? batchR.data : [];
+  
+  // Debug: show count
+  container.appendChild(el('div',{style:'color:var(--muted);font-size:12px;margin-bottom:8px'},'API returned '+batches.length+' batches'));
 
   // Delete all unassigned button
   const qCard = el('div',{className:'card',style:'margin-bottom:16px'});
