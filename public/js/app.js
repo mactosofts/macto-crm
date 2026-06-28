@@ -1533,8 +1533,14 @@ async function renderInvoices(container) {
       app('td',{style:'color:#4ade80;font-weight:700'},fmt(inv.total)),
       app('td',{},app('span',{style:`background:${sc}22;color:${sc};padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600`},inv.status.toUpperCase())),
       app('td',{style:'color:var(--muted);font-size:12px'},fmtDateOnly(inv.due_date)),
-      app('td',{},app('div',{style:'display:flex;gap:4px'},
+      app('td',{},app('div',{style:'display:flex;gap:4px;flex-wrap:wrap'},
         app('button',{className:'btn btn-ghost btn-xs',onClick:()=>openInvoicePDF(inv.id)},'📄 PDF'),
+        app('button',{className:'btn btn-success btn-xs',style:'background:rgba(37,211,102,0.15);color:#25d166;border:1px solid rgba(37,211,102,0.3)',onClick:async()=>{
+          const clientR=await api.get('/clients/'+inv.client_id);
+          const phone=clientR.ok?clientR.data.phone:'';
+          const name=inv.Client?inv.Client.name:'Client';
+          await sendWhatsAppDocument('invoice',inv.invoice_no,inv.total,phone,name,inv.client_id);
+        }},'📱 WA'),
         inv.status==='sent'?app('button',{className:'btn btn-success btn-xs',onClick:async()=>{await api.put('/invoices/'+inv.id,{status:'paid'});renderInvoices(container);}},'✓ Paid'):null,
         inv.status==='draft'?app('button',{className:'btn btn-cyan btn-xs',onClick:async()=>{await api.put('/invoices/'+inv.id,{status:'sent'});renderInvoices(container);}},'Send'):null
       ))
@@ -2038,8 +2044,14 @@ async function renderProposals(container) {
       app('td',{style:'color:var(--muted2);font-size:12px'},p.project_title||'—'),
       app('td',{style:'color:#4ade80;font-weight:700'},fmt(p.investment)),
       app('td',{},app('span',{style:`background:${sc}22;color:${sc};padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600`},p.status.toUpperCase())),
-      app('td',{},app('div',{style:'display:flex;gap:4px'},
+      app('td',{},app('div',{style:'display:flex;gap:4px;flex-wrap:wrap'},
         app('button',{className:'btn btn-ghost btn-xs',onClick:()=>openProposalPDF(p.id)},'📄 PDF'),
+        app('button',{className:'btn btn-success btn-xs',style:'background:rgba(37,211,102,0.15);color:#25d166;border:1px solid rgba(37,211,102,0.3)',onClick:async()=>{
+          const clientR=await api.get('/clients/'+p.client_id);
+          const phone=clientR.ok?clientR.data.phone:'';
+          const name=p.Client?p.Client.name:'Client';
+          await sendWhatsAppDocument('proposal',p.proposal_no,p.investment,phone,name,p.client_id);
+        }},'📱 WA'),
         p.status==='draft'?app('button',{className:'btn btn-cyan btn-xs',onClick:async()=>{await api.put('/proposals/'+p.id,{status:'sent',sent_at:new Date()});renderProposals(container);}},'Send'):null,
         p.status==='sent'?app('button',{className:'btn btn-success btn-xs',onClick:async()=>{await api.put('/proposals/'+p.id,{status:'accepted',accepted_at:new Date()});renderProposals(container);}},'✓ Accept'):null,
         p.status==='sent'?app('button',{className:'btn btn-danger btn-xs',onClick:async()=>{await api.put('/proposals/'+p.id,{status:'rejected'});renderProposals(container);}},'Reject'):null,
