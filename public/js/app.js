@@ -2331,3 +2331,141 @@ function openWhatsAppModal(phone, clientId, clientName, onSent) {
   document.body.appendChild(overlay);
 }
 
+
+// ── CHART HELPERS ─────────────────────────────────────────────────
+function drawBarChart(canvas, labels, values, color1, color2) {
+  const ctx = canvas.getContext('2d');
+  const W = canvas.offsetWidth||600; const H = canvas.offsetHeight||220;
+  canvas.width = W; canvas.height = H;
+  const maxVal = Math.max(...values, 1);
+  const pad = { top:30, right:20, bottom:40, left:60 };
+  const chartW = W - pad.left - pad.right;
+  const chartH = H - pad.top - pad.bottom;
+  const barW = (chartW / Math.max(labels.length,1)) * 0.6;
+  const gap   = chartW / Math.max(labels.length,1);
+
+  ctx.fillStyle = 'transparent';
+  ctx.clearRect(0,0,W,H);
+
+  // Grid lines
+  for(let i=0;i<=4;i++) {
+    const y = pad.top + chartH * (1 - i/4);
+    ctx.strokeStyle = 'rgba(255,255,255,0.05)';
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(pad.left,y); ctx.lineTo(W-pad.right,y); ctx.stroke();
+    ctx.fillStyle = '#5a6785';
+    ctx.font = '10px Inter, sans-serif';
+    ctx.textAlign = 'right';
+    const val = maxVal*i/4;
+    ctx.fillText(val>=1000?'₹'+Math.round(val/1000)+'k':'₹'+Math.round(val), pad.left-6, y+3);
+  }
+
+  // Bars
+  labels.forEach((label,i) => {
+    const x = pad.left + gap*i + gap/2 - barW/2;
+    const barH2 = ((values[i]||0)/maxVal)*chartH;
+    const y = pad.top + chartH - barH2;
+    const grad = ctx.createLinearGradient(0,y,0,pad.top+chartH);
+    grad.addColorStop(0, color1);
+    grad.addColorStop(1, color2||color1);
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    if(ctx.roundRect) ctx.roundRect(x,y,barW,barH2,4);
+    else ctx.rect(x,y,barW,barH2);
+    ctx.fill();
+
+    // Value label
+    if(values[i]>0) {
+      ctx.fillStyle = '#c4cde0';
+      ctx.font = 'bold 10px Inter, sans-serif';
+      ctx.textAlign = 'center';
+      const v = values[i];
+      ctx.fillText(v>=1000?'₹'+Math.round(v/1000)+'k':'₹'+Math.round(v), x+barW/2, y-5);
+    }
+
+    // X label
+    ctx.fillStyle = '#5a6785';
+    ctx.font = '10px Inter, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(label, x+barW/2, H-pad.bottom+16);
+  });
+}
+
+function drawDonutChart(canvas, data) {
+  const ctx = canvas.getContext('2d');
+  const size = Math.min(canvas.offsetWidth||200, canvas.offsetHeight||180);
+  canvas.width = size; canvas.height = size;
+  const cx = size/2, cy = size/2, r = size*0.38, innerR = r*0.6;
+  const total = data.reduce((s,d)=>s+d.v,0)||1;
+  let angle = -Math.PI/2;
+  data.forEach(d=>{
+    const slice = (d.v/total)*Math.PI*2;
+    ctx.beginPath();
+    ctx.moveTo(cx,cy);
+    ctx.arc(cx,cy,r,angle,angle+slice);
+    ctx.closePath();
+    ctx.fillStyle = d.c;
+    ctx.fill();
+    angle += slice;
+  });
+  // Inner hole
+  ctx.beginPath();
+  ctx.arc(cx,cy,innerR,0,Math.PI*2);
+  ctx.fillStyle = '#0e1220';
+  ctx.fill();
+  // Center text
+  ctx.fillStyle = '#e8edf8';
+  ctx.font = 'bold 18px Inter, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText(total, cx, cy+3);
+  ctx.fillStyle = '#5a6785';
+  ctx.font = '10px Inter, sans-serif';
+  ctx.fillText('TOTAL', cx, cy+16);
+}
+
+function drawLineChart(canvas, labels, datasets) {
+  const ctx = canvas.getContext('2d');
+  const W = canvas.offsetWidth||600; const H = canvas.offsetHeight||200;
+  canvas.width = W; canvas.height = H;
+  const pad = {top:20,right:20,bottom:35,left:55};
+  const cW = W-pad.left-pad.right, cH = H-pad.top-pad.bottom;
+  const allVals = datasets.flatMap(d=>d.values);
+  const maxVal = Math.max(...allVals,1);
+  ctx.clearRect(0,0,W,H);
+
+  // Grid
+  for(let i=0;i<=4;i++) {
+    const y = pad.top + cH*(1-i/4);
+    ctx.strokeStyle='rgba(255,255,255,0.05)';ctx.lineWidth=1;
+    ctx.beginPath();ctx.moveTo(pad.left,y);ctx.lineTo(W-pad.right,y);ctx.stroke();
+    ctx.fillStyle='#5a6785';ctx.font='10px sans-serif';ctx.textAlign='right';
+    ctx.fillText('₹'+Math.round(maxVal*i/4/1000)+'k',pad.left-4,y+3);
+  }
+
+  datasets.forEach(ds=>{
+    const pts = ds.values.map((v,i)=>({
+      x: pad.left + (i/(Math.max(labels.length-1,1)))*cW,
+      y: pad.top + cH*(1-(v/maxVal))
+    }));
+    // Line
+    ctx.beginPath();
+    pts.forEach((p,i)=>i===0?ctx.moveTo(p.x,p.y):ctx.lineTo(p.x,p.y));
+    ctx.strokeStyle = ds.color;
+    ctx.lineWidth = 2.5;
+    ctx.lineJoin = 'round';
+    ctx.stroke();
+    // Dots
+    pts.forEach(p=>{
+      ctx.beginPath();ctx.arc(p.x,p.y,4,0,Math.PI*2);
+      ctx.fillStyle=ds.color;ctx.fill();
+      ctx.strokeStyle='#0e1220';ctx.lineWidth=2;ctx.stroke();
+    });
+  });
+
+  // X labels
+  labels.forEach((l,i)=>{
+    const x = pad.left+(i/(Math.max(labels.length-1,1)))*cW;
+    ctx.fillStyle='#5a6785';ctx.font='10px sans-serif';ctx.textAlign='center';
+    ctx.fillText(l,x,H-pad.bottom+14);
+  });
+}
