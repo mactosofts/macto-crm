@@ -863,7 +863,585 @@ function openStaffLeadsModal(staff) {
   document.body.appendChild(overlay);
 }
 
+// ── IMPORT ────────────────────────────────────────────────────────
+function renderImport(container) {
+  container.innerHTML = '';
+  container.appendChild(el('div',{className:'page-title'},'📤 Import Leads'));
+  const mDiv = el('div',{});
+  const previewDiv = el('div',{});
+  let headers = [], previewRows = [], totalRows = 0, uploadedFile = null;
+  const fileInp = el('input',{type:'file',accept:'.xlsx,.csv',style:'display:none'});
+  const dropzone = el('div',{className:'dropzone',onClick:()=>fileInp.click()},
+    el('div',{style:'font-size:32px'},'📂'),
+    el('p',{},'Click to upload Excel (.xlsx) or CSV file'),
+    el('p',{style:'font-size:11px;margin-top:4px'},'Max 10MB · Columns: Name, Phone, Email, City, Category')
+  );
+  fileInp.addEventListener('change',async()=>{
+    const file = fileInp.files[0];
+    if(!file) return;
+    uploadedFile = file;
+    dropzone.style.borderColor = 'var(--accent)';
+    dropzone.innerHTML = '<div style="font-size:13px;color:var(--accent2)">📄 '+file.name+'</div><p style="color:var(--muted);font-size:12px">Processing…</p>';
+    const fd = new FormData(); fd.append('file', file);
+    const r = await api.upload('/import/preview', fd);
+    if(!r.ok){mDiv.className='alert alert-error';mDiv.textContent=r.error;return;}
+    headers = r.headers; previewRows = r.preview; totalRows = r.total;
+    renderMapping();
+  });
+  container.appendChild(dropzone);
+  container.appendChild(fileInp);
+  container.appendChild(mDiv);
+  container.appendChild(previewDiv);
 
+  function renderMapping() {
+    previewDiv.innerHTML = '';
+    previewDiv.appendChild(el('div',{className:'alert alert-info',style:'margin-bottom:12px'},'✅ Found '+totalRows+' rows. Map columns below:'));
+    const fields = [
+      {key:'name',label:'Name *'},{key:'phone',label:'Phone *'},{key:'email',label:'Email'},
+      {key:'city',label:'City'},{key:'state',label:'State'},
+    ];
+    const mapping = {};
+    const catSel = el('select',{className:'inp inp-sm'});
+    CATEGORIES.forEach(c=>catSel.appendChild(el('option',{value:c.value},c.label)));
+    const srcSel = el('select',{className:'inp inp-sm'});
+    [['cold_call','Cold Call'],['ads','Ads'],['import','Import'],['referral','Referral'],['manual','Manual']].forEach(([v,l])=>srcSel.appendChild(el('option',{value:v},l)));
+    srcSel.value = 'import';
+    const mapCard = el('div',{className:'card',style:'margin-bottom:14px'});
+    mapCard.appendChild(el('div',{className:'card-title'},'Map Columns'));
+    fields.forEach(f=>{
+      const sel = el('select',{className:'inp inp-sm'});
+      sel.appendChild(el('option',{value:''},'— Skip —'));
+      headers.forEach(h=>sel.appendChild(el('option',{value:h},h)));
+      const match = headers.find(h=>h.toLowerCase().includes(f.key));
+      if(match) sel.value = match;
+      mapping[f.key] = sel;
+      mapCard.appendChild(el('div',{style:'display:grid;grid-template-columns:120px 1fr;gap:8px;align-items:center;margin-bottom:8px'},
+        el('div',{style:'font-size:12px;color:var(--muted2);font-weight:600'},f.label), sel
+      ));
+    });
+    mapCard.appendChild(el('div',{style:'display:grid;grid-template-columns:120px 1fr;gap:8px;align-items:center;margin-top:8px'},
+      el('div',{style:'font-size:12px;color:var(--muted2);font-weight:600'},'Category'), catSel
+    ));
+    mapCard.appendChild(el('div',{style:'display:grid;grid-template-columns:120px 1fr;gap:8px;align-items:center;margin-top:8px'},
+      el('div',{style:'font-size:12px;color:var(--muted2);font-weight:600'},'Source'), srcSel
+    ));
+    const tw = el('div',{className:'table-wrap',style:'margin-bottom:14px'},
+      el('table',{},
+        el('thead',{},el('tr',{},...headers.map(h=>el('th',{},h)))),
+        el('tbody',{},...previewRows.map(row=>el('tr',{},...headers.map(h=>el('td',{style:'font-size:12px'},String(row[h]||''))))))
+      )
+    );
+    const importBtn = el('button',{className:'btn btn-primary',style:'width:100%;justify-content:center',onClick:async()=>{
+      const map = {};
+      fields.forEach(f=>{ if(mapping[f.key].value) map[f.key]=mapping[f.key].value; });
+      if(!map.name&&!map.phone){mDiv.className='alert alert-error';mDiv.textContent='Map at least Name or Phone.';return;}
+      importBtn.disabled=true;importBtn.textContent='Importing…';
+      const fd2 = new FormData();
+      fd2.append('file', uploadedFile);
+      fd2.append('mapping', JSON.stringify(map));
+      fd2.append('category', catSel.value);
+      fd2.append('source', srcSel.value);
+      const r2 = await api.upload('/import', fd2);
+      importBtn.disabled=false;importBtn.textContent='🚀 Import Leads';
+      if(r2.ok){mDiv.className='alert alert-success';mDiv.textContent='✅ Imported '+r2.count+' leads!';}
+      else{mDiv.className='alert alert-error';mDiv.textContent=r2.error;}
+    }},'🚀 Import Leads');
+    previewDiv.appendChild(mapCard);
+    previewDiv.appendChild(el('div',{className:'card-title',style:'margin-bottom:8px'},'Preview (first 5 rows)'));
+    previewDiv.appendChild(tw);
+    previewDiv.appendChild(importBtn);
+  }
+}
+
+// ── AUDITS ────────────────────────────────────────────────────────
+async function renderAudits(container) {
+  container.innerHTML = loading();
+  const [auditsR, statsR] = await Promise.all([api.get('/audits'), api.get('/audits/stats')]);
+  container.innerHTML = '';
+  container.appendChild(el('div',{className:'page-title'},'🔍 Audit Reports'));
+  const stats = statsR.ok ? statsR : {total:0,today:0,month:0,interested:0,converted:0,proposalSent:0};
+  const grid = el('div',{className:'stats-grid'});
+  [{l:'Total Audits',v:stats.total,c:'#6366f1'},{l:'Today',v:stats.today,c:'#3b82f6'},{l:'This Month',v:stats.month,c:'#06b6d4'},
+   {l:'Interested',v:stats.interested,c:'#22c55e'},{l:'Converted',v:stats.converted,c:'#4ade80'},{l:'Proposals Sent',v:stats.proposalSent,c:'#a78bfa'}
+  ].forEach(k=>grid.appendChild(kpiCard(k.l,k.v,'',k.c)));
+  container.appendChild(grid);
+  const audits = auditsR.ok ? auditsR.data : [];
+  const searchInp = el('input',{type:'search',className:'inp inp-sm',placeholder:'Search company…',style:'flex:1;min-width:180px'});
+  const statusSel = el('select',{className:'inp inp-sm'});
+  [['all','All Status'],['audited','Audited'],['proposal_sent','Proposal Sent'],['interested','Interested'],['not_interested','Not Interested'],['converted','Converted']].forEach(([v,l])=>statusSel.appendChild(el('option',{value:v},l)));
+  container.appendChild(el('div',{className:'filters-bar'},searchInp,statusSel));
+  const listArea = el('div',{});
+  container.appendChild(listArea);
+  function renderList() {
+    const search = searchInp.value.toLowerCase();
+    const status = statusSel.value;
+    const filtered = audits.filter(a=>{
+      if(search && !(a.company_name||'').toLowerCase().includes(search)) return false;
+      if(status!=='all' && a.status!==status) return false;
+      return true;
+    });
+    listArea.innerHTML='';
+    if(!filtered.length){listArea.appendChild(el('div',{style:'text-align:center;padding:40px;color:var(--muted)'},'No audits found.'));return;}
+    const sColors={audited:'#94a3b8',proposal_sent:'#06b6d4',interested:'#22c55e',not_interested:'#ef4444',converted:'#4ade80'};
+    const tw = el('div',{className:'table-wrap'},el('table',{},
+      el('thead',{},el('tr',{},...['Company','Category','Rating','Status','Auditor','Date','Actions'].map(h=>el('th',{},h)))),
+      el('tbody',{},...filtered.map(a=>{
+        const sc = sColors[a.status]||'#94a3b8';
+        return el('tr',{},
+          el('td',{},el('div',{className:'td-name'},a.company_name),el('div',{className:'td-muted'},a.website_url||'')),
+          el('td',{style:'font-size:12px;color:var(--muted2)'},a.category||'—'),
+          el('td',{style:'font-size:12px'},a.current_website_rating?'⭐ '+a.current_website_rating+'/10':'—'),
+          el('td',{},el('span',{style:`background:${sc}22;color:${sc};padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600`},a.status)),
+          el('td',{className:'td-muted'},a.auditor?a.auditor.name:'—'),
+          el('td',{className:'td-muted'},fmtDay(a.audit_date)),
+          el('td',{},el('button',{className:'btn btn-ghost btn-xs',onClick:()=>openAuditModal(a,()=>renderAudits(container))},'View'))
+        );
+      }))
+    ));
+    listArea.appendChild(tw);
+  }
+  let st; searchInp.addEventListener('input',()=>{clearTimeout(st);st=setTimeout(renderList,300);}); statusSel.addEventListener('change',renderList);
+  renderList();
+}
+
+function openAuditModal(audit, onUpdate) {
+  const mDiv = el('div',{});
+  const statusSel = el('select',{className:'inp inp-sm'});
+  [['audited','Audited'],['proposal_sent','Proposal Sent'],['interested','Interested'],['not_interested','Not Interested'],['converted','Converted']].forEach(([v,l])=>{
+    const o=el('option',{value:v},l); if(v===audit.status)o.selected=true; statusSel.appendChild(o);
+  });
+  const notesInp = el('textarea',{className:'inp',rows:3,value:audit.notes||'',placeholder:'Notes…'});
+  const overlay = el('div',{className:'modal-overlay center',onClick:(e)=>{if(e.target===overlay)overlay.remove();}},
+    el('div',{className:'modal center-modal wide-modal'},
+      el('div',{className:'modal-header'},
+        el('div',{},
+          el('div',{style:'font-weight:800;font-size:17px'},audit.company_name),
+          el('div',{style:'color:var(--muted);font-size:12px;margin-top:2px'},audit.website_url||'')
+        ),
+        el('button',{className:'modal-close',onClick:()=>overlay.remove()},'✕')
+      ),
+      mDiv,
+      el('div',{style:'display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin-bottom:16px'},
+        el('div',{},el('div',{style:'font-size:11px;color:var(--muted)'},'PHONE'),el('div',{style:'font-weight:600'},audit.phone||'—')),
+        el('div',{},el('div',{style:'font-size:11px;color:var(--muted)'},'EMAIL'),el('div',{style:'font-weight:600'},audit.email||'—')),
+        el('div',{},el('div',{style:'font-size:11px;color:var(--muted)'},'CATEGORY'),el('div',{style:'font-weight:600'},audit.category||'—')),
+        el('div',{},el('div',{style:'font-size:11px;color:var(--muted)'},'RATING'),el('div',{style:'font-weight:600'},(audit.current_website_rating||0)+'/10'))
+      ),
+      audit.issues_found?el('div',{className:'card',style:'margin-bottom:12px'},el('div',{className:'card-title'},'Issues Found'),el('div',{style:'font-size:13px;color:var(--muted2)'},audit.issues_found)):null,
+      audit.opportunities?el('div',{className:'card',style:'margin-bottom:12px'},el('div',{className:'card-title'},'Opportunities'),el('div',{style:'font-size:13px;color:var(--muted2)'},audit.opportunities)):null,
+      el('div',{className:'card',style:'margin-bottom:12px'},
+        el('div',{className:'card-title'},'Update Status'),
+        el('div',{className:'field'},el('label',{},'Status'),statusSel),
+        el('div',{className:'field'},el('label',{},'Notes'),notesInp),
+        el('button',{className:'btn btn-primary btn-sm',onClick:async()=>{
+          const r=await api.put('/audits/'+audit.id,{status:statusSel.value,notes:notesInp.value});
+          if(r.ok){mDiv.className='alert alert-success';mDiv.textContent='✅ Updated!';if(onUpdate)onUpdate();}
+          else{mDiv.className='alert alert-error';mDiv.textContent=r.error;}
+        }},'Save Update')
+      )
+    )
+  );
+  document.body.appendChild(overlay);
+}
+
+// ── AUDIT DASHBOARD ───────────────────────────────────────────────
+async function renderAuditDash(container) {
+  container.innerHTML = loading();
+  const statsR = await api.get('/audits/stats');
+  container.innerHTML = '';
+  container.appendChild(el('div',{className:'page-title'},'🔍 Audit Dashboard'));
+  const stats = statsR.ok ? statsR : {total:0,today:0,month:0,interested:0,converted:0,proposalSent:0};
+  const grid = el('div',{className:'stats-grid'});
+  [{l:'Total Audits',v:stats.total,c:'#6366f1'},{l:'Today',v:stats.today,c:'#3b82f6'},{l:'This Month',v:stats.month,c:'#06b6d4'},
+   {l:'Interested',v:stats.interested,c:'#22c55e'},{l:'Converted',v:stats.converted,c:'#4ade80'},{l:'Proposals Sent',v:stats.proposalSent,c:'#a78bfa'}
+  ].forEach(k=>grid.appendChild(kpiCard(k.l,k.v,'',k.c)));
+  container.appendChild(grid);
+  container.appendChild(el('div',{className:'card',style:'margin-bottom:14px'},
+    el('div',{className:'card-title'},'⚡ Quick Actions'),
+    el('div',{style:'display:flex;gap:8px;flex-wrap:wrap'},
+      el('button',{className:'btn btn-primary',onClick:()=>{STATE.tab='new_audit';render();}},'+ New Audit'),
+      el('button',{className:'btn btn-ghost',onClick:()=>{STATE.tab='my_audits';render();}},'📋 My Audits')
+    )
+  ));
+}
+
+// ── NEW AUDIT ─────────────────────────────────────────────────────
+function renderNewAudit(container) {
+  container.innerHTML = '';
+  container.appendChild(el('div',{className:'page-title'},'+ New Audit'));
+  const mDiv = el('div',{});
+  const fields = {
+    company_name: el('input',{type:'text',className:'inp',placeholder:'Company Name *'}),
+    website_url: el('input',{type:'url',className:'inp',placeholder:'Website URL'}),
+    phone: el('input',{type:'tel',className:'inp',placeholder:'Phone'}),
+    email: el('input',{type:'email',className:'inp',placeholder:'Email'}),
+    current_website_rating: el('input',{type:'number',className:'inp',placeholder:'Website Rating (0-10)',min:0,max:10}),
+    issues_found: el('textarea',{className:'inp',rows:3,placeholder:'Issues found on website/business…'}),
+    opportunities: el('textarea',{className:'inp',rows:3,placeholder:'Opportunities / what can be improved…'}),
+    notes: el('textarea',{className:'inp',rows:2,placeholder:'Additional notes…'}),
+  };
+  const catSel = el('select',{className:'inp'});
+  [['ecommerce','🛒 E-commerce'],['real_estate','🏢 Real Estate'],['clinic','🏥 Clinic'],['study_abroad','✈️ Study Abroad'],['restaurant','🍽 Restaurant'],['retail','🏪 Retail'],['corporate','🏛 Corporate']].forEach(([v,l])=>catSel.appendChild(el('option',{value:v},l)));
+  const propSel = el('select',{className:'inp'});
+  [['false','No'],['true','Yes']].forEach(([v,l])=>propSel.appendChild(el('option',{value:v},l)));
+  const btn = el('button',{className:'btn btn-primary',style:'width:100%;justify-content:center;margin-top:14px',onClick:async()=>{
+    if(!fields.company_name.value){mDiv.className='alert alert-error';mDiv.textContent='Company name required.';return;}
+    btn.disabled=true;btn.textContent='Saving…';
+    const r = await api.post('/audits',{
+      company_name:fields.company_name.value, website_url:fields.website_url.value,
+      phone:fields.phone.value, email:fields.email.value, category:catSel.value,
+      current_website_rating:parseInt(fields.current_website_rating.value)||0,
+      issues_found:fields.issues_found.value, opportunities:fields.opportunities.value,
+      notes:fields.notes.value, proposal_sent:propSel.value==='true', status:'audited'
+    });
+    btn.disabled=false;btn.textContent='Save Audit';
+    if(r.ok){mDiv.className='alert alert-success';mDiv.textContent='✅ Audit saved!';Object.values(fields).forEach(f=>f.value='');}
+    else{mDiv.className='alert alert-error';mDiv.textContent=r.error;}
+  }},'Save Audit');
+  container.appendChild(el('div',{className:'card',style:'max-width:600px'},
+    mDiv,
+    el('div',{className:'form-grid'},
+      el('div',{className:'field',style:'margin:0'},el('label',{},'Company Name *'),fields.company_name),
+      el('div',{className:'field',style:'margin:0'},el('label',{},'Website URL'),fields.website_url)
+    ),
+    el('div',{className:'form-grid',style:'margin-top:10px'},
+      el('div',{className:'field',style:'margin:0'},el('label',{},'Phone'),fields.phone),
+      el('div',{className:'field',style:'margin:0'},el('label',{},'Email'),fields.email)
+    ),
+    el('div',{className:'form-grid',style:'margin-top:10px'},
+      el('div',{className:'field',style:'margin:0'},el('label',{},'Category'),catSel),
+      el('div',{className:'field',style:'margin:0'},el('label',{},'Website Rating (0-10)'),fields.current_website_rating)
+    ),
+    el('div',{className:'field',style:'margin-top:10px'},el('label',{},'Issues Found'),fields.issues_found),
+    el('div',{className:'field'},el('label',{},'Opportunities'),fields.opportunities),
+    el('div',{className:'form-grid'},
+      el('div',{className:'field',style:'margin:0'},el('label',{},'Proposal Sent?'),propSel),
+      el('div',{className:'field',style:'margin:0'},el('label',{},'Notes'),fields.notes)
+    ),
+    btn
+  ));
+}
+
+// ── ANALYTICS ─────────────────────────────────────────────────────
+async function renderAnalytics(container) {
+  container.innerHTML = loading();
+  const r = await api.get('/analytics/full');
+  container.innerHTML = '';
+  container.appendChild(el('div',{className:'page-title'},'📈 Analytics'));
+  if(!r.ok){container.appendChild(alertEl('error','Failed to load analytics'));return;}
+  const revenueCard = el('div',{className:'card',style:'margin-bottom:16px'});
+  revenueCard.appendChild(el('div',{className:'card-title'},'💰 Monthly Revenue (Last 6 Months)'));
+  const canvas = document.createElement('canvas');
+  canvas.style.cssText='width:100%;height:200px';
+  revenueCard.appendChild(canvas);
+  container.appendChild(revenueCard);
+  requestAnimationFrame(()=>{
+    const ctx = canvas.getContext('2d');
+    const months = r.monthlyRevenue||[];
+    const maxVal = Math.max(...months.map(m=>m.revenue),1);
+    const W = canvas.offsetWidth||600; const H = 200;
+    canvas.width = W; canvas.height = H;
+    const pad = 45; const gap = (W-pad*2)/Math.max(months.length,1);
+    const barW = gap*0.6;
+    ctx.fillStyle='#0f1629';ctx.fillRect(0,0,W,H);
+    for(let i=0;i<=4;i++){
+      const y=pad+(H-pad*2)*(1-i/4);
+      ctx.strokeStyle='rgba(255,255,255,0.05)';ctx.lineWidth=1;
+      ctx.beginPath();ctx.moveTo(pad,y);ctx.lineTo(W-pad,y);ctx.stroke();
+      ctx.fillStyle='#64748b';ctx.font='10px sans-serif';ctx.textAlign='right';
+      ctx.fillText('₹'+Math.round(maxVal*i/4/1000)+'k',pad-4,y+3);
+    }
+    months.forEach((m,i)=>{
+      const x=pad+gap*i+gap/2-barW/2;
+      const barH=((m.revenue||0)/maxVal)*(H-pad*2);
+      const y=H-pad-barH;
+      const grad=ctx.createLinearGradient(0,y,0,H-pad);
+      grad.addColorStop(0,'#6366f1');grad.addColorStop(1,'#4ade80');
+      ctx.fillStyle=grad;
+      ctx.beginPath();ctx.roundRect(x,y,barW,barH,4);ctx.fill();
+      ctx.fillStyle='#94a3b8';ctx.font='10px sans-serif';ctx.textAlign='center';
+      ctx.fillText(m.month,x+barW/2,H-pad+14);
+      if(m.revenue>0){ctx.fillStyle='#e2e8f0';ctx.font='bold 10px sans-serif';ctx.fillText('₹'+Math.round(m.revenue/1000)+'k',x+barW/2,y-4);}
+    });
+  });
+  const grid = el('div',{className:'stats-grid',style:'margin-bottom:16px'});
+  [{l:'Total Revenue',v:fmt(r.totalRevenue||0),c:'#22c55e'},{l:'Pipeline Value',v:fmt(r.pipelineValue||0),c:'#6366f1'},
+   {l:'Staff Count',v:(r.staffPerf||[]).length,c:'#3b82f6'},{l:'Loss Reasons',v:(r.reasons||[]).length,c:'#f59e0b'}
+  ].forEach(k=>grid.appendChild(kpiCard(k.l,k.v,'',k.c)));
+  container.appendChild(grid);
+  if(r.bySource&&Object.keys(r.bySource).length){
+    const srcCard = el('div',{className:'card',style:'margin-bottom:16px'});
+    srcCard.appendChild(el('div',{className:'card-title'},'📊 Lead Source Performance'));
+    const tw = el('div',{className:'table-wrap'},el('table',{},
+      el('thead',{},el('tr',{},...['Source','Total','Interested','Not Interested','Conv Rate'].map(h=>el('th',{},h)))),
+      el('tbody',{},...Object.entries(r.bySource).map(([src,d])=>{
+        const cr=parseFloat(d.rate||0);const crColor=cr>=15?'#22c55e':cr>=8?'#f59e0b':'#ef4444';
+        return el('tr',{},
+          el('td',{style:'font-weight:600;text-transform:capitalize'},src.replace(/_/g,' ')),
+          el('td',{style:'color:var(--muted2)'},d.total),
+          el('td',{style:'color:#22c55e'},d.interested),
+          el('td',{style:'color:#ef4444'},d.not_interested),
+          el('td',{style:`color:${crColor};font-weight:700`},cr.toFixed(1)+'%')
+        );
+      }))
+    ));
+    srcCard.appendChild(tw);container.appendChild(srcCard);
+  }
+  if(r.staffPerf&&r.staffPerf.length){
+    const staffCard = el('div',{className:'card',style:'margin-bottom:16px'});
+    staffCard.appendChild(el('div',{className:'card-title'},'👥 Staff Performance'));
+    const tw = el('div',{className:'table-wrap'},el('table',{},
+      el('thead',{},el('tr',{},...['Name','Role','Total Calls','Month Calls','Leads','Conv%','Revenue','Score'].map(h=>el('th',{},h)))),
+      el('tbody',{},...r.staffPerf.map(s=>{
+        const cr=parseFloat(s.convRate||0);const crColor=cr>=15?'#22c55e':cr>=8?'#f59e0b':'#ef4444';
+        const trend=s.trend>0?'📈 +'+s.trend+'%':s.trend<0?'📉 '+s.trend+'%':'→';
+        return el('tr',{},
+          el('td',{style:'font-weight:600'},s.name),
+          el('td',{style:'color:var(--muted);font-size:11px;text-transform:capitalize'},s.role),
+          el('td',{style:'color:#3b82f6'},s.totalCalls),
+          el('td',{},s.monthCalls+' ',el('span',{style:'font-size:11px;color:var(--muted)'},trend)),
+          el('td',{style:'color:var(--muted2)'},s.totalLeads),
+          el('td',{style:`color:${crColor};font-weight:700`},cr+'%'),
+          el('td',{style:'color:#4ade80'},fmt(s.revenue)),
+          el('td',{style:'color:#a78bfa;font-weight:700'},s.score)
+        );
+      }))
+    ));
+    staffCard.appendChild(tw);container.appendChild(staffCard);
+  }
+  if(r.reasons&&r.reasons.length){
+    const rCard = el('div',{className:'card'});
+    rCard.appendChild(el('div',{className:'card-title'},'❌ Not Converted Reasons'));
+    r.reasons.slice(0,10).forEach(reason=>{
+      rCard.appendChild(el('div',{style:'padding:6px 0;border-bottom:1px solid var(--border);font-size:13px;color:var(--muted2)'},'• '+reason));
+    });
+    container.appendChild(rCard);
+  }
+}
+
+// ── REVENUE ───────────────────────────────────────────────────────
+async function renderRevenue(container) {
+  container.innerHTML = loading();
+  const invR = await api.get('/invoices');
+  container.innerHTML = '';
+  container.appendChild(el('div',{className:'page-title'},'💰 Revenue'));
+  const invoices = invR.ok ? invR.data : [];
+  const paid = invoices.filter(i=>i.status==='paid');
+  const pending = invoices.filter(i=>i.status==='sent');
+  const draft = invoices.filter(i=>i.status==='draft');
+  const totalPaid = paid.reduce((s,i)=>s+parseFloat(i.total||0),0);
+  const totalPending = pending.reduce((s,i)=>s+parseFloat(i.total||0),0);
+  const grid = el('div',{className:'stats-grid',style:'margin-bottom:20px'});
+  [{l:'Total Collected',v:fmt(totalPaid),s:paid.length+' invoices paid',c:'#22c55e'},
+   {l:'Pending Collection',v:fmt(totalPending),s:pending.length+' invoices',c:'#f59e0b'},
+   {l:'Total Invoices',v:invoices.length,s:'All time',c:'#6366f1'},
+   {l:'Drafts',v:draft.length,s:'Not sent yet',c:'#94a3b8'}
+  ].forEach(k=>grid.appendChild(kpiCard(k.l,k.v,k.s,k.c)));
+  container.appendChild(grid);
+  const byMonth = {};
+  paid.forEach(inv=>{
+    const m = new Date(inv.createdAt).toLocaleString('en-IN',{month:'short',year:'2-digit'});
+    byMonth[m]=(byMonth[m]||0)+parseFloat(inv.total||0);
+  });
+  if(Object.keys(byMonth).length){
+    const mCard = el('div',{className:'card',style:'margin-bottom:16px'});
+    mCard.appendChild(el('div',{className:'card-title'},'📅 Monthly Breakdown'));
+    const tw = el('div',{className:'table-wrap'},el('table',{},
+      el('thead',{},el('tr',{},...['Month','Revenue','% of Total'].map(h=>el('th',{},h)))),
+      el('tbody',{},...Object.entries(byMonth).reverse().map(([m,v])=>{
+        const pct=totalPaid>0?Math.round((v/totalPaid)*100):0;
+        return el('tr',{},
+          el('td',{style:'font-weight:600'},m),
+          el('td',{style:'color:#4ade80;font-weight:700'},fmt(v)),
+          el('td',{},el('div',{style:'display:flex;align-items:center;gap:8px'},
+            el('div',{style:'background:var(--bg);border-radius:999px;height:6px;width:100px;overflow:hidden'},
+              el('div',{style:`width:${pct}%;background:#6366f1;height:100%;border-radius:999px`})
+            ),
+            el('span',{style:'font-size:12px;color:var(--muted)'},pct+'%')
+          ))
+        );
+      }))
+    ));
+    mCard.appendChild(tw);container.appendChild(mCard);
+  }
+  if(pending.length){
+    const pCard = el('div',{className:'card'});
+    pCard.appendChild(el('div',{className:'card-title'},'⏳ Pending Payments'));
+    const tw = el('div',{className:'table-wrap'},el('table',{},
+      el('thead',{},el('tr',{},...['Invoice','Client','Amount','Due Date'].map(h=>el('th',{},h)))),
+      el('tbody',{},...pending.map(inv=>el('tr',{},
+        el('td',{style:'font-family:monospace;color:var(--accent2)'},inv.invoice_no),
+        el('td',{className:'td-name'},inv.Client?inv.Client.name:'—'),
+        el('td',{style:'color:#f59e0b;font-weight:700'},fmt(inv.total)),
+        el('td',{style:'color:var(--muted);font-size:12px'},fmtDay(inv.due_date))
+      )))
+    ));
+    pCard.appendChild(tw);container.appendChild(pCard);
+  }
+}
+
+// ── TEAM ──────────────────────────────────────────────────────────
+async function renderTeam(container) {
+  container.innerHTML = loading();
+  const usersR = await api.get('/users');
+  container.innerHTML = '';
+  container.appendChild(el('div',{className:'page-title'},'👥 Team Management'));
+  const users = usersR.ok ? usersR.data : [];
+  const mDiv = el('div',{});
+  container.appendChild(mDiv);
+  container.appendChild(el('button',{className:'btn btn-primary',style:'margin-bottom:14px',onClick:()=>openAddUserModal(()=>renderTeam(container))},'+ Add Team Member'));
+  const grid = el('div',{className:'stats-grid',style:'margin-bottom:16px'});
+  [{l:'Total Members',v:users.length,c:'#6366f1'},{l:'Staff',v:users.filter(u=>u.role==='staff').length,c:'#3b82f6'},
+   {l:'Admins',v:users.filter(u=>u.role==='admin').length,c:'#fbbf24'},{l:'Auditors',v:users.filter(u=>u.role==='auditor').length,c:'#06b6d4'}
+  ].forEach(k=>grid.appendChild(kpiCard(k.l,k.v,'',k.c)));
+  container.appendChild(grid);
+  if(!users.length){container.appendChild(el('div',{className:'card'},el('p',{style:'text-align:center;color:var(--muted);padding:30px'},'No team members yet.')));return;}
+  const tw = el('div',{className:'table-wrap'},el('table',{},
+    el('thead',{},el('tr',{},...['Name','Username','Role','Daily Target','Joined','Actions'].map(h=>el('th',{},h)))),
+    el('tbody',{},...users.map(u=>{
+      const rColors={admin:'#fbbf24',staff:'#6366f1',auditor:'#06b6d4'};
+      const rc=rColors[u.role]||'#94a3b8';
+      return el('tr',{},
+        el('td',{style:'font-weight:600'},u.name),
+        el('td',{style:'font-family:monospace;color:var(--muted2)'},u.username),
+        el('td',{},el('span',{style:`background:${rc}22;color:${rc};padding:2px 8px;border-radius:4px;font-size:11px;font-weight:700`},u.role.toUpperCase())),
+        el('td',{style:'color:var(--muted2)'},u.daily_target||50),
+        el('td',{className:'td-muted'},fmtDay(u.createdAt)),
+        el('td',{},el('div',{style:'display:flex;gap:4px'},
+          el('button',{className:'btn btn-ghost btn-xs',onClick:()=>openEditUserModal(u,()=>renderTeam(container))},'✏️ Edit'),
+          u.username!=='admin'?el('button',{className:'btn btn-danger btn-xs',onClick:async()=>{
+            if(!confirm('Remove '+u.name+'?'))return;
+            const r=await api.del('/users/'+u.id);
+            if(r.ok)renderTeam(container);
+            else{mDiv.className='alert alert-error';mDiv.textContent=r.error;}
+          }},'🗑️'):null
+        ))
+      );
+    }))
+  ));
+  container.appendChild(tw);
+}
+
+function openAddUserModal(onSave) {
+  const mDiv=el('div',{});
+  const nameInp=el('input',{type:'text',className:'inp',placeholder:'Full Name *'});
+  const userInp=el('input',{type:'text',className:'inp',placeholder:'Username *'});
+  const passInp=el('input',{type:'password',className:'inp',placeholder:'Password * (min 6)'});
+  const roleSel=el('select',{className:'inp'});
+  [['staff','Staff'],['admin','Admin'],['auditor','Auditor']].forEach(([v,l])=>roleSel.appendChild(el('option',{value:v},l)));
+  const targetInp=el('input',{type:'number',className:'inp',value:'50'});
+  const overlay=el('div',{className:'modal-overlay center',onClick:(e)=>{if(e.target===overlay)overlay.remove();}},
+    el('div',{className:'modal center-modal'},
+      el('div',{className:'modal-header'},el('span',{className:'modal-title'},'Add Team Member'),el('button',{className:'modal-close',onClick:()=>overlay.remove()},'✕')),
+      mDiv,
+      el('div',{className:'field'},el('label',{},'Full Name *'),nameInp),
+      el('div',{className:'form-grid'},
+        el('div',{className:'field',style:'margin:0'},el('label',{},'Username *'),userInp),
+        el('div',{className:'field',style:'margin:0'},el('label',{},'Password *'),passInp)
+      ),
+      el('div',{className:'form-grid',style:'margin-top:10px'},
+        el('div',{className:'field',style:'margin:0'},el('label',{},'Role'),roleSel),
+        el('div',{className:'field',style:'margin:0'},el('label',{},'Daily Target'),targetInp)
+      ),
+      el('button',{className:'btn btn-primary',style:'width:100%;justify-content:center;margin-top:14px',onClick:async()=>{
+        if(!nameInp.value||!userInp.value||!passInp.value){mDiv.className='alert alert-error';mDiv.textContent='All fields required.';return;}
+        const r=await api.post('/users',{name:nameInp.value,username:userInp.value,password:passInp.value,role:roleSel.value,daily_target:parseInt(targetInp.value)||50});
+        if(r.ok){overlay.remove();if(onSave)onSave();}
+        else{mDiv.className='alert alert-error';mDiv.textContent=r.error;}
+      }},'Add Member')
+    )
+  );
+  document.body.appendChild(overlay);
+}
+
+function openEditUserModal(user, onSave) {
+  const mDiv=el('div',{});
+  const nameInp=el('input',{type:'text',className:'inp',value:user.name});
+  const roleSel=el('select',{className:'inp'});
+  [['staff','Staff'],['admin','Admin'],['auditor','Auditor']].forEach(([v,l])=>{const o=el('option',{value:v},l);if(v===user.role)o.selected=true;roleSel.appendChild(o);});
+  const targetInp=el('input',{type:'number',className:'inp',value:user.daily_target||50});
+  const passInp=el('input',{type:'password',className:'inp',placeholder:'New password (leave blank to keep)'});
+  const overlay=el('div',{className:'modal-overlay center',onClick:(e)=>{if(e.target===overlay)overlay.remove();}},
+    el('div',{className:'modal center-modal'},
+      el('div',{className:'modal-header'},el('span',{className:'modal-title'},'Edit: '+user.name),el('button',{className:'modal-close',onClick:()=>overlay.remove()},'✕')),
+      mDiv,
+      el('div',{className:'field'},el('label',{},'Full Name'),nameInp),
+      el('div',{className:'form-grid'},
+        el('div',{className:'field',style:'margin:0'},el('label',{},'Role'),roleSel),
+        el('div',{className:'field',style:'margin:0'},el('label',{},'Daily Target'),targetInp)
+      ),
+      el('div',{className:'field',style:'margin-top:10px'},el('label',{},'New Password (optional)'),passInp),
+      el('button',{className:'btn btn-primary',style:'width:100%;justify-content:center;margin-top:14px',onClick:async()=>{
+        const body={name:nameInp.value,role:roleSel.value,daily_target:parseInt(targetInp.value)||50};
+        if(passInp.value)body.password=passInp.value;
+        const r=await api.put('/users/'+user.id,body);
+        if(r.ok){overlay.remove();if(onSave)onSave();}
+        else{mDiv.className='alert alert-error';mDiv.textContent=r.error;}
+      }},'Save Changes')
+    )
+  );
+  document.body.appendChild(overlay);
+}
+
+// ── PASSWORD ──────────────────────────────────────────────────────
+function renderPassword(container) {
+  container.innerHTML = '';
+  container.appendChild(el('div',{className:'page-title'},'🔐 Change Password'));
+  const mDiv = el('div',{});
+  const curInp = el('input',{type:'password',className:'inp',placeholder:'Current password'});
+  const newInp = el('input',{type:'password',className:'inp',placeholder:'New password (min 6 chars)'});
+  const conInp = el('input',{type:'password',className:'inp',placeholder:'Confirm new password'});
+  const btn = el('button',{className:'btn btn-primary',style:'width:100%;justify-content:center;margin-top:4px',onClick:async()=>{
+    if(!curInp.value||!newInp.value||!conInp.value){mDiv.className='alert alert-error';mDiv.textContent='All fields required.';return;}
+    if(newInp.value!==conInp.value){mDiv.className='alert alert-error';mDiv.textContent='Passwords do not match.';return;}
+    if(newInp.value.length<6){mDiv.className='alert alert-error';mDiv.textContent='Min 6 characters.';return;}
+    btn.disabled=true;btn.textContent='Saving…';
+    const r=await api.post('/change-password',{current_password:curInp.value,new_password:newInp.value});
+    btn.disabled=false;btn.textContent='Update Password';
+    if(r.ok){mDiv.className='alert alert-success';mDiv.textContent='✅ Password updated!';curInp.value='';newInp.value='';conInp.value='';}
+    else{mDiv.className='alert alert-error';mDiv.textContent=r.error;}
+  }},'Update Password');
+  container.appendChild(el('div',{className:'card',style:'max-width:400px'},
+    mDiv,
+    el('div',{className:'field'},el('label',{},'Current Password'),curInp),
+    el('div',{className:'field'},el('label',{},'New Password'),newInp),
+    el('div',{className:'field'},el('label',{},'Confirm Password'),conInp),
+    btn
+  ));
+}
+
+// ── MY STATS (Staff) ──────────────────────────────────────────────
+async function renderMyStats(container) {
+  container.innerHTML = loading();
+  const [statsR, invR] = await Promise.all([api.get('/leads/stats'), api.get('/invoices')]);
+  container.innerHTML = '';
+  container.appendChild(el('div',{className:'page-title'},'📊 My Stats'));
+  const s = statsR.ok ? statsR : {total:0,byStatus:[],todayCalls:0,monthCalls:0};
+  const byStatus = Object.fromEntries((s.byStatus||[]).map(x=>[x.status,parseInt(x.cnt)]));
+  const invoices = invR.ok ? invR.data : [];
+  const myPaid = invoices.filter(i=>i.status==='paid').reduce((s,i)=>s+parseFloat(i.total||0),0);
+  const convRate = s.total>0 ? ((byStatus['interested']||0)/s.total*100).toFixed(1) : 0;
+  const grid = el('div',{className:'stats-grid',style:'margin-bottom:16px'});
+  [{l:'Total Leads',v:s.total,c:'#6366f1'},{l:'Calls Today',v:s.todayCalls,c:'#3b82f6'},
+   {l:'Month Calls',v:s.monthCalls,c:'#06b6d4'},{l:'Interested',v:byStatus['interested']||0,c:'#22c55e'},
+   {l:'Conv Rate',v:convRate+'%',c:'#a78bfa'},{l:'My Revenue',v:fmt(myPaid),c:'#fbbf24'}
+  ].forEach(k=>grid.appendChild(kpiCard(k.l,k.v,'',k.c)));
+  container.appendChild(grid);
+  const sCard = el('div',{className:'card'});
+  sCard.appendChild(el('div',{className:'card-title'},'📋 Lead Status Breakdown'));
+  CALL_STATUSES.forEach(cs=>{
+    const cnt=byStatus[cs.value]||0;
+    const pct=s.total>0?Math.round((cnt/s.total)*100):0;
+    sCard.appendChild(el('div',{className:'progress-row'},
+      el('div',{className:'progress-label',style:`color:${cs.color}`},cs.label),
+      el('div',{className:'progress-bar-wrap'},el('div',{className:'progress-bar',style:`width:${pct}%;background:${cs.color}`})),
+      el('div',{className:'progress-count'},cnt)
+    ));
+  });
+  container.appendChild(sCard);
+}
+
+boot();
 // ── HELPERS ──────────────────────────────────────────────────────
 const loading = () => '<div class="loading-center"><div class="spinner"></div></div>';
 const alertEl = (type, msg) => { const d = el('div',{className:`alert alert-${type}`},msg); return d; };
@@ -1752,4 +2330,4 @@ function openWhatsAppModal(phone, clientId, clientName, onSent) {
   );
   document.body.appendChild(overlay);
 }
-boot();
+
