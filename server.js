@@ -12,11 +12,18 @@ const PORT = process.env.PORT || 3000;
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-app.use(express.static(path.join(__dirname, 'public')));
+
+// Serve static files from public folder
+app.use(express.static(path.join(__dirname, 'public'), {
+  setHeaders: (res, filePath) => {
+    if (filePath.endsWith('.js')) res.setHeader('Content-Type', 'application/javascript');
+    if (filePath.endsWith('.css')) res.setHeader('Content-Type', 'text/css');
+  }
+}));
 
 async function init() {
   try {
-    await sequelize.sync({ force: true });
+    await sequelize.sync({ alter: true });
     console.log('✅ Database tables created');
 
     const sessionStore = new SequelizeStore({ db: sequelize });
@@ -32,7 +39,11 @@ async function init() {
     }));
 
     app.use('/api', apiRouter);
-    app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
+
+    // Serve index.html for all non-API routes
+    app.get('*', (req, res) => {
+      res.sendFile(path.join(__dirname, 'public', 'index.html'));
+    });
 
     const existing = await User.findOne({ where: { username: 'admin' } });
     if (!existing) {
@@ -41,10 +52,11 @@ async function init() {
       console.log('✅ Admin created: admin / admin123');
     }
 
-    app.listen(PORT, () => console.log(`🚀 Macto AI CRM running on port ${PORT}`));
+    app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Macto AI CRM running on port ${PORT}`));
 
   } catch (err) {
     console.error('❌ Startup error:', err.message);
+    console.error(err.stack);
     process.exit(1);
   }
 }
