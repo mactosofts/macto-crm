@@ -280,7 +280,7 @@ function renderApp() {
   searchWrap.appendChild(searchDrop);
 
   const topbar = el('div',{className:'topbar'},
-    el('div',{className:'brand'},el('img',{src:'/macto.png',style:'height:36px;object-fit:contain;filter:brightness(1.1)'}),el('span',{className:`role-pill ${user.role}`},user.role.toUpperCase())),
+    el('div',{className:'brand'},el('img',{src:'/mactoai.png',style:'height:38px;object-fit:contain;border-radius:6px'}),el('span',{className:`role-pill ${user.role}`},user.role.toUpperCase())),
     isAdmin ? searchWrap : el('div',{}),
     el('div',{className:'topbar-right'},
       el('button',{id:'notif-bell',className:'btn btn-ghost btn-sm',style:'position:relative;font-size:16px'},'🔔'),
@@ -369,168 +369,177 @@ function renderApp() {
 // ── ADMIN DASHBOARD ──────────────────────────────────────────────
 async function renderDashboard(container) {
   container.innerHTML = loading();
-  const r = await api.get('/dashboard/overview');
+  const [r, analyticsR] = await Promise.all([api.get('/dashboard/overview'), api.get('/analytics/full')]);
   container.innerHTML = '';
   if (!r.ok) { container.appendChild(alertEl('error','Failed to load dashboard')); return; }
 
-  container.appendChild(el('div',{className:'page-title'},'🏠 Admin Dashboard'));
-
-  // KPI Row 1 - Leads
-  container.appendChild(sectionLabel('📋 LEADS OVERVIEW'));
-  const leadsGrid = el('div',{className:'stats-grid'});
-  [
-    {l:'Total Leads',v:r.totalLeads,s:'Today: +'+r.todayLeads,c:'#6366f1'},
-    {l:'Unassigned',v:r.unassigned,s:'Need assignment',c:r.unassigned>0?'#ef4444':'#22c55e'},
-    {l:'Assigned',v:r.assigned,s:Math.round((r.assigned/(r.totalLeads||1))*100)+'% assigned',c:'#22c55e'},
-    {l:'Today Calls',v:r.todayCalls,s:'Week: '+r.weekCalls,c:'#3b82f6'},
-    {l:'Total Calls',v:r.totalCalls,s:'All time',c:'#8b5cf6'},
-  ].forEach(k=>leadsGrid.appendChild(kpiCard(k.l,k.v,k.s,k.c)));
-  container.appendChild(leadsGrid);
-
-  // KPI Row 2 - Revenue
-  container.appendChild(sectionLabel('💰 REVENUE & BUSINESS'));
-  const revGrid = el('div',{className:'stats-grid'});
-  [
-    {l:'Total Revenue',v:fmt(r.totalRevenue),s:'All time collected',c:'#22c55e'},
-    {l:'Month Revenue',v:fmt(r.monthRevenue),s:'This month (paid)',c:'#4ade80'},
-    {l:'Pending Invoices',v:fmt(r.pendingInvValue),s:r.pendingInvCount+' invoices',c:'#fb923c'},
-    {l:'Active Clients',v:r.activeClients,s:'Total: '+r.totalClients,c:'#06b6d4'},
-    {l:'Proposals',v:r.totalProposals,s:'Accepted: '+r.acceptedProposals,c:'#a78bfa'},
-    {l:'Tasks',v:r.pendingTasks,s:'Overdue: '+r.overdueTasks,c:r.overdueTasks>0?'#ef4444':'#8b5cf6'},
-  ].forEach(k=>revGrid.appendChild(kpiCard(k.l,k.v,k.s,k.c)));
-  container.appendChild(revGrid);
-
-  // Staff Assignment Table
-  container.appendChild(sectionLabel('👥 STAFF PERFORMANCE & LEAD ASSIGNMENT'));
-  const staffCard = el('div',{className:'card',style:'margin-bottom:16px'});
-  const staffHeader = el('div',{style:'display:flex;justify-content:space-between;align-items:center;margin-bottom:12px'},
-    el('div',{className:'card-title',style:'margin:0'},'Staff Lead Assignment'),
-    el('button',{className:'btn btn-primary btn-sm',onClick:()=>{STATE.tab='assign_leads';render();}},'+ Assign Leads')
-  );
-  staffCard.appendChild(staffHeader);
-
-  // Assignment progress bar
-  const assignPct = r.totalLeads>0 ? Math.round((r.assigned/r.totalLeads)*100) : 0;
-  staffCard.appendChild(el('div',{style:'margin-bottom:16px'},
-    el('div',{style:'display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px'},
-      el('span',{style:'color:var(--muted2)'},`Assigned ${r.assigned} of ${r.totalLeads} total leads`),
-      el('span',{style:'color:#6366f1;font-weight:700'},assignPct+'%')
+  // Header
+  const now = new Date();
+  const dateStr = now.toLocaleDateString('en-IN',{weekday:'long',year:'numeric',month:'long',day:'numeric'});
+  container.appendChild(el('div',{style:'display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:24px;flex-wrap:wrap;gap:10px'},
+    el('div',{},
+      el('div',{className:'page-title',style:'margin-bottom:4px'},'Command Center'),
+      el('div',{style:'color:var(--muted);font-size:13px'},dateStr)
     ),
-    el('div',{style:'background:var(--bg);border-radius:999px;height:8px;overflow:hidden'},
-      el('div',{style:`width:${assignPct}%;background:linear-gradient(90deg,#6366f1,#22c55e);height:100%;border-radius:999px`})
-    ),
-    el('div',{style:'display:flex;gap:16px;margin-top:6px;font-size:11px'},
-      el('span',{style:'color:#22c55e'},'✓ Assigned: '+r.assigned),
-      el('span',{style:'color:#ef4444'},'⚠ Unassigned: '+r.unassigned)
+    el('div',{style:'display:flex;gap:8px;flex-wrap:wrap'},
+      el('button',{className:'btn btn-primary btn-sm',onClick:()=>{STATE.tab='assign_leads';render();}},'+ Assign Leads'),
+      el('button',{className:'btn btn-ghost btn-sm',onClick:()=>{STATE.tab='clients';render();}},'+ Add Client'),
+      el('button',{className:'btn btn-ghost btn-sm',onClick:()=>renderDashboard(container)},'🔄 Refresh')
     )
   ));
 
-  if (r.staffStats && r.staffStats.length) {
-    const tbl = el('div',{style:'overflow-x:auto'},
-      el('table',{style:'width:100%;border-collapse:collapse;font-size:12px'},
-        el('thead',{},el('tr',{style:'background:var(--bg2)'},
-          ...['Staff','Assigned','Pending','Called','Interested','Not Int.','Conv%','Today Calls','Progress','Action'].map(h=>el('th',{style:'padding:8px 10px;text-align:left;color:var(--muted);font-size:11px;white-space:nowrap'},h))
-        )),
-        el('tbody',{},...r.staffStats.map(s=>{
-          const cr = parseFloat(s.convRate);
-          const crColor = cr>=15?'#22c55e':cr>=8?'#f59e0b':'#ef4444';
-          return el('tr',{style:'cursor:pointer',onClick:()=>openStaffLeadsModal(s)},
-            el('td',{style:'padding:8px 10px;font-weight:600'},s.name),
-            el('td',{style:'padding:8px 10px;color:#6366f1;font-weight:700'},s.total),
-            el('td',{style:'padding:8px 10px;color:#f59e0b'},s.pending),
-            el('td',{style:'padding:8px 10px;color:#3b82f6'},s.called),
-            el('td',{style:'padding:8px 10px;color:#22c55e'},s.interested),
-            el('td',{style:'padding:8px 10px;color:#ef4444'},s.not_interested),
-            el('td',{style:`padding:8px 10px;font-weight:700;color:${crColor}`},s.convRate+'%'),
-            el('td',{style:'padding:8px 10px;color:var(--muted2)'},s.todayCalls+' / '+s.daily_target),
-            el('td',{style:'padding:8px 10px'},
-              el('div',{style:'background:var(--bg);border-radius:999px;height:5px;width:80px;overflow:hidden'},
-                el('div',{style:`width:${s.completion}%;background:#6366f1;height:100%;border-radius:999px`})
-              ),
-              el('div',{style:'color:var(--muted);font-size:10px;margin-top:2px'},s.completion+'%')
-            ),
-            el('td',{style:'padding:8px 10px'},
-              el('button',{className:'btn btn-ghost btn-xs',onClick:(e)=>{e.stopPropagation();openStaffLeadsModal(s);}},'View Leads')
-            )
-          );
-        }))
-      )
-    );
-    staffCard.appendChild(tbl);
-    staffCard.appendChild(el('p',{style:'color:var(--muted);font-size:11px;margin-top:8px'},'💡 Click any row to see that staff member\'s leads'));
-  } else {
-    staffCard.appendChild(el('p',{style:'color:var(--muted);text-align:center;padding:20px'},'No staff members added yet. Go to Team to add staff.'));
-  }
-  container.appendChild(staffCard);
+  // KPI GRID
+  const kpiRow = el('div',{style:'display:grid;grid-template-columns:repeat(auto-fill,minmax(155px,1fr));gap:14px;margin-bottom:24px'});
+  [
+    {l:'Total Leads',v:r.totalLeads,s:'Today: +'+r.todayLeads,c:'#6366f1',icon:'📋'},
+    {l:'Unassigned',v:r.unassigned,s:'Need assignment',c:r.unassigned>0?'#ef4444':'#22c55e',icon:'⚠️'},
+    {l:'Today Calls',v:r.todayCalls,s:'Week: '+r.weekCalls,c:'#3b82f6',icon:'📞'},
+    {l:'Total Revenue',v:fmt(r.totalRevenue),s:'All time',c:'#22c55e',icon:'💰'},
+    {l:'Month Revenue',v:fmt(r.monthRevenue),s:'This month',c:'#4ade80',icon:'📈'},
+    {l:'Active Clients',v:r.activeClients,s:'Total: '+r.totalClients,c:'#06b6d4',icon:'👥'},
+    {l:'Pending Tasks',v:r.pendingTasks,s:'Overdue: '+r.overdueTasks,c:r.overdueTasks>0?'#ef4444':'#8b5cf6',icon:'✅'},
+    {l:'Pending Invoices',v:fmt(r.pendingInvValue),s:r.pendingInvCount+' invoices',c:'#fb923c',icon:'🧾'},
+  ].forEach(k=>{
+    const card = el('div',{style:`background:var(--bg3);border:1px solid var(--border);border-radius:14px;padding:18px;border-top:3px solid ${k.c};transition:all 0.2s;position:relative;overflow:hidden`});
+    card.addEventListener('mouseenter',()=>{card.style.transform='translateY(-2px)';card.style.boxShadow=`0 8px 25px ${k.c}22`;});
+    card.addEventListener('mouseleave',()=>{card.style.transform='';card.style.boxShadow='';});
+    card.appendChild(el('div',{style:'display:flex;justify-content:space-between;align-items:flex-start'},
+      el('div',{style:`font-size:${typeof k.v==='string'&&k.v.length>6?'16px':'26px'};font-weight:900;color:${k.c};letter-spacing:-1px;line-height:1`},String(k.v)),
+      el('div',{style:'font-size:20px;opacity:0.7'},k.icon)
+    ));
+    card.appendChild(el('div',{style:'font-size:11px;font-weight:700;color:var(--muted2);text-transform:uppercase;letter-spacing:0.5px;margin-top:8px'},k.l));
+    if(k.s) card.appendChild(el('div',{style:'font-size:11px;color:var(--muted);margin-top:3px'},k.s));
+    kpiRow.appendChild(card);
+  });
+  container.appendChild(kpiRow);
 
-  // Staff Leaderboard
+  // CHARTS ROW
+  const chartsRow = el('div',{style:'display:grid;grid-template-columns:1.6fr 1fr;gap:16px;margin-bottom:20px'});
+  const revChartCard = el('div',{className:'card'});
+  revChartCard.appendChild(el('div',{className:'card-title'},'📊 Revenue Trend — Last 6 Months'));
+  const revCanvas = document.createElement('canvas');
+  revCanvas.style.cssText='width:100%;height:220px;display:block';
+  revChartCard.appendChild(revCanvas);
+  chartsRow.appendChild(revChartCard);
+
+  const donutCard = el('div',{className:'card'});
+  donutCard.appendChild(el('div',{className:'card-title'},'🎯 Lead Status'));
+  const donutCanvas = document.createElement('canvas');
+  donutCanvas.style.cssText='width:100%;height:180px;display:block;margin:0 auto';
+  donutCard.appendChild(donutCanvas);
+  const donutLegend = el('div',{style:'display:flex;flex-wrap:wrap;gap:8px;margin-top:12px'});
+  donutCard.appendChild(donutLegend);
+  chartsRow.appendChild(donutCard);
+  container.appendChild(chartsRow);
+
+  requestAnimationFrame(()=>{
+    const monthlyData = analyticsR.ok ? (analyticsR.monthlyRevenue||[]) : [];
+    drawBarChart(revCanvas, monthlyData.map(m=>m.month), monthlyData.map(m=>m.revenue), '#6366f1', '#4ade80');
+    const statusCounts = {};
+    if(r.staffStats) r.staffStats.forEach(s=>{
+      statusCounts.pending=(statusCounts.pending||0)+s.pending;
+      statusCounts.called=(statusCounts.called||0)+s.called;
+      statusCounts.interested=(statusCounts.interested||0)+s.interested;
+      statusCounts.not_interested=(statusCounts.not_interested||0)+s.not_interested;
+    });
+    const donutData = [
+      {l:'Interested',v:statusCounts.interested||0,c:'#22c55e'},
+      {l:'Called',v:statusCounts.called||0,c:'#3b82f6'},
+      {l:'Pending',v:statusCounts.pending||0,c:'#f59e0b'},
+      {l:'Not Int.',v:statusCounts.not_interested||0,c:'#ef4444'},
+      {l:'Unassigned',v:r.unassigned||0,c:'#8b5cf6'},
+    ].filter(d=>d.v>0);
+    if(donutData.length) drawDonutChart(donutCanvas, donutData);
+    donutData.forEach(d=>{
+      donutLegend.appendChild(el('div',{style:'display:flex;align-items:center;gap:5px;font-size:11px'},
+        el('div',{style:`width:10px;height:10px;border-radius:3px;background:${d.c};flex-shrink:0`}),
+        el('span',{style:'color:var(--muted2)'},d.l+' ('+d.v+')')
+      ));
+    });
+  });
+
+  // LEADERBOARD
   if(r.staffStats && r.staffStats.length) {
     const lbCard = el('div',{className:'card',style:'margin-bottom:16px'});
     lbCard.appendChild(el('div',{style:'display:flex;justify-content:space-between;align-items:center;margin-bottom:14px'},
       el('div',{className:'card-title',style:'margin:0'},'🏆 Staff Leaderboard'),
-      el('div',{style:'font-size:11px;color:var(--muted)'},'Ranked by performance score')
+      el('button',{className:'btn btn-primary btn-sm',onClick:()=>{STATE.tab='assign_leads';render();}},'+ Assign Leads')
     ));
     const medals=['🥇','🥈','🥉'];
     r.staffStats.slice(0,5).forEach((s,i)=>{
       const cr=parseFloat(s.convRate||0);
       const crColor=cr>=15?'#22c55e':cr>=8?'#f59e0b':'#ef4444';
-      lbCard.appendChild(el('div',{style:`display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--border);${i===0?'background:rgba(251,191,36,0.04);border-radius:8px;padding:10px 12px;':''}`},
-        el('div',{style:'font-size:20px;width:28px;text-align:center'},medals[i]||('#'+(i+1))),
+      lbCard.appendChild(el('div',{style:`display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--border)`},
+        el('div',{style:'font-size:20px;width:28px;text-align:center'},medals[i]||String(i+1)),
         el('div',{style:`width:36px;height:36px;border-radius:50%;background:${s.avatar_color||'#6366f1'}33;border:2px solid ${s.avatar_color||'#6366f1'};display:flex;align-items:center;justify-content:center;font-weight:800;color:${s.avatar_color||'#6366f1'};font-size:14px;flex-shrink:0`},s.name.charAt(0).toUpperCase()),
         el('div',{style:'flex:1'},
           el('div',{style:'font-weight:700;font-size:13px'},s.name),
-          el('div',{style:'font-size:11px;color:var(--muted2)'},s.monthCalls+' calls this month · '+s.interested+' interested')
+          el('div',{style:'font-size:11px;color:var(--muted2)'},s.monthCalls+' calls · '+s.interested+' interested')
         ),
         el('div',{style:'text-align:right'},
           el('div',{style:`font-size:18px;font-weight:900;color:${crColor}`},s.convRate+'%'),
           el('div',{style:'font-size:10px;color:var(--muted)'},'conv rate'),
-          el('div',{style:'font-size:12px;color:#4ade80;font-weight:600'},fmt(s.revenue))
+          el('div',{style:'font-size:12px;color:#4ade80;font-weight:600'},fmt(s.revenue||0))
         )
       ));
     });
+    // Assignment progress
+    const assignPct = r.totalLeads>0 ? Math.round((r.assigned/r.totalLeads)*100) : 0;
+    lbCard.appendChild(el('div',{style:'margin-top:14px;padding-top:14px;border-top:1px solid var(--border)'},
+      el('div',{style:'display:flex;justify-content:space-between;font-size:12px;margin-bottom:6px'},
+        el('span',{style:'color:var(--muted2)'},'Lead Assignment: '+r.assigned+' of '+r.totalLeads),
+        el('span',{style:'color:#6366f1;font-weight:700'},assignPct+'%')
+      ),
+      el('div',{style:'background:var(--bg);border-radius:999px;height:8px;overflow:hidden'},
+        el('div',{style:`width:${assignPct}%;background:linear-gradient(90deg,#6366f1,#22c55e);height:100%;border-radius:999px`})
+      )
+    ));
     container.appendChild(lbCard);
+  } else {
+    container.appendChild(el('div',{className:'card',style:'margin-bottom:16px;text-align:center;padding:30px'},
+      el('div',{style:'font-size:32px;margin-bottom:10px'},'👥'),
+      el('div',{style:'color:var(--muted);font-size:14px;margin-bottom:12px'},'No staff members yet. Add your team to start assigning leads.'),
+      el('button',{className:'btn btn-primary',onClick:()=>{STATE.tab='team';render();}},'+ Add Team Members')
+    ));
   }
 
-  // Hot Leads
+  // HOT LEADS
   if(r.hotLeads && r.hotLeads.length) {
     const hlCard = el('div',{className:'card',style:'margin-bottom:16px'});
     hlCard.appendChild(el('div',{style:'display:flex;justify-content:space-between;align-items:center;margin-bottom:12px'},
-      el('div',{className:'card-title',style:'margin:0'},'🔥 Hot Leads — Priority Callbacks'),
+      el('div',{className:'card-title',style:'margin:0'},'🔥 Hot Leads'),
       el('button',{className:'btn btn-ghost btn-sm',onClick:()=>{STATE.tab='all_leads';render();}},'View All →')
     ));
     r.hotLeads.forEach(l=>{
-      const score = l.lead_score||0;
-      const scoreColor = score>=70?'#22c55e':score>=50?'#f59e0b':'#fb923c';
+      const score=l.lead_score||0;
+      const sc=score>=70?'#22c55e':score>=50?'#f59e0b':'#fb923c';
       hlCard.appendChild(el('div',{style:'display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid var(--border)'},
-        el('div',{style:`background:${scoreColor}22;color:${scoreColor};border-radius:8px;padding:4px 8px;font-weight:800;font-size:13px;min-width:40px;text-align:center`},score),
+        el('div',{style:`background:${sc}22;color:${sc};border-radius:8px;padding:4px 8px;font-weight:800;font-size:13px;min-width:40px;text-align:center`},score),
         el('div',{style:'flex:1'},
           el('div',{style:'font-weight:600;font-size:13px'},l.name||'Unknown'),
           el('div',{style:'font-size:11px;color:var(--muted2)'},l.phone+' · '+catLabel(l.category))
         ),
         el('div',{style:'text-align:right'},
-          el('div',{style:`color:${scoreColor};font-size:11px;font-weight:700`},l.status.replace('_',' ').toUpperCase()),
-          l.callback_date?el('div',{style:'color:#fbbf24;font-size:11px'},'📅 '+l.callback_date):null,
-          el('div',{style:'font-size:11px;color:var(--muted)'},l.assignedStaff?.name||'Unassigned')
+          el('div',{style:`color:${sc};font-size:11px;font-weight:700`},l.status.replace('_',' ').toUpperCase()),
+          l.callback_date?el('div',{style:'color:#fbbf24;font-size:11px'},'📅 '+l.callback_date):null
         )
       ));
     });
     container.appendChild(hlCard);
   }
 
-  // Pipeline Summary
-  if (r.pipelineByStage && r.pipelineByStage.length) {
-    container.appendChild(sectionLabel('📊 PIPELINE STATUS'));
+  // PIPELINE SUMMARY
+  if(r.pipelineByStage && r.pipelineByStage.length) {
     const pCard = el('div',{className:'card',style:'margin-bottom:16px'});
-    const pHeader = el('div',{style:'display:flex;justify-content:space-between;align-items:center;margin-bottom:12px'},
-      el('div',{className:'card-title',style:'margin:0'},'Client Pipeline'),
-      el('button',{className:'btn btn-ghost btn-sm',onClick:()=>{STATE.tab='pipeline';render();}},'View All →')
-    );
-    pCard.appendChild(pHeader);
+    pCard.appendChild(el('div',{style:'display:flex;justify-content:space-between;align-items:center;margin-bottom:12px'},
+      el('div',{className:'card-title',style:'margin:0'},'📊 Pipeline Status'),
+      el('button',{className:'btn btn-ghost btn-sm',onClick:()=>{STATE.tab='kanban';render();}},'Kanban View →')
+    ));
     const byStage = Object.fromEntries(r.pipelineByStage.map(x=>[x.pipeline_stage,{cnt:parseInt(x.cnt),val:parseFloat(x.val||0)}]));
     const pRow = el('div',{style:'display:flex;gap:8px;overflow-x:auto;padding-bottom:8px'});
     PIPELINE_STAGES.forEach(s=>{
-      if (!byStage[s.value]) return;
-      pRow.appendChild(el('div',{style:`flex-shrink:0;background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:10px 14px;border-top:2px solid ${s.color};cursor:pointer;min-width:120px`,onClick:()=>{STATE.tab='pipeline';render();}},
+      if(!byStage[s.value]) return;
+      pRow.appendChild(el('div',{style:`flex-shrink:0;background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:10px 14px;border-top:2px solid ${s.color};cursor:pointer;min-width:110px`,onClick:()=>{STATE.tab='kanban';render();}},
         el('div',{style:`font-size:22px;font-weight:800;color:${s.color}`},String(byStage[s.value].cnt)),
         el('div',{style:'font-size:11px;color:var(--muted);margin-top:2px;white-space:nowrap'},s.label),
         byStage[s.value].val>0?el('div',{style:'font-size:11px;color:#4ade80;margin-top:2px'},fmt(byStage[s.value].val)):null
@@ -540,15 +549,14 @@ async function renderDashboard(container) {
     container.appendChild(pCard);
   }
 
-  // Overdue Followups
-  if (r.overduefollowups && r.overduefollowups.length) {
-    container.appendChild(sectionLabel('🔔 OVERDUE FOLLOW-UPS'));
+  // OVERDUE FOLLOWUPS
+  if(r.overduefollowups && r.overduefollowups.length) {
     const fCard = el('div',{className:'card',style:'margin-bottom:16px'});
     fCard.appendChild(el('div',{style:'display:flex;justify-content:space-between;align-items:center;margin-bottom:12px'},
-      el('div',{className:'card-title',style:'margin:0'},'⚠️ '+r.overduefollowups.length+' Follow-ups Overdue'),
+      el('div',{className:'card-title',style:'margin:0'},'⚠️ '+r.overduefollowups.length+' Overdue Follow-ups'),
       el('button',{className:'btn btn-ghost btn-sm',onClick:()=>{STATE.tab='clients';render();}},'View All →')
     ));
-    r.overduefollowups.slice(0,8).forEach(c=>{
+    r.overduefollowups.slice(0,6).forEach(c=>{
       fCard.appendChild(el('div',{style:'display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)'},
         el('div',{},el('div',{style:'font-weight:600;font-size:13px'},c.name),el('div',{style:'color:var(--muted);font-size:11px'},(c.assignedStaff?.name||'Unassigned')+' · '+catLabel(c.category))),
         el('div',{style:'text-align:right'},stageBadge(c.pipeline_stage),el('div',{style:'color:#ef4444;font-size:11px;margin-top:3px'},'📅 '+fmtDay(c.next_followup)))
@@ -557,12 +565,12 @@ async function renderDashboard(container) {
     container.appendChild(fCard);
   }
 
-  // Recent Activity
-  if (r.recentActivities && r.recentActivities.length) {
-    container.appendChild(sectionLabel('🕐 RECENT ACTIVITY'));
+  // RECENT ACTIVITY
+  if(r.recentActivities && r.recentActivities.length) {
     const aCard = el('div',{className:'card'});
+    aCard.appendChild(el('div',{className:'card-title'},'🕐 Recent Activity'));
     r.recentActivities.slice(0,8).forEach(a=>{
-      const act = ACT_MAP[a.type]||{label:a.type,color:'#94a3b8'};
+      const act=ACT_MAP[a.type]||{label:a.type,color:'#94a3b8'};
       aCard.appendChild(el('div',{style:'display:flex;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);align-items:flex-start'},
         el('span',{style:`background:${act.color}22;color:${act.color};border-radius:50%;width:28px;height:28px;display:flex;align-items:center;justify-content:center;font-size:12px;flex-shrink:0`},act.label.slice(0,2)),
         el('div',{style:'flex:1'},
@@ -574,6 +582,7 @@ async function renderDashboard(container) {
     });
     container.appendChild(aCard);
   }
+
   // Auto-refresh every 60 seconds
   if(STATE._dashRefresh) clearInterval(STATE._dashRefresh);
   STATE._dashRefresh = setInterval(()=>{
