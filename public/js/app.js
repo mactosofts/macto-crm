@@ -280,7 +280,7 @@ function renderApp() {
   searchWrap.appendChild(searchDrop);
 
   const topbar = el('div',{className:'topbar'},
-    el('div',{className:'brand'},el('div',{className:'brand-logo'},'Macto AI CRM'),el('span',{className:`role-pill ${user.role}`},user.role.toUpperCase())),
+    el('div',{className:'brand'},el('img',{src:'/macto.png',style:'height:36px;object-fit:contain;filter:brightness(1.1)'}),el('span',{className:`role-pill ${user.role}`},user.role.toUpperCase())),
     isAdmin ? searchWrap : el('div',{}),
     el('div',{className:'topbar-right'},
       el('button',{id:'notif-bell',className:'btn btn-ghost btn-sm',style:'position:relative;font-size:16px'},'🔔'),
