@@ -392,12 +392,16 @@ async function renderDashboard(container) {
   const kpiRow = el('div',{style:'display:grid;grid-template-columns:repeat(auto-fill,minmax(155px,1fr));gap:14px;margin-bottom:24px'});
   [
     {l:'Total Leads',v:r.totalLeads,s:'Today: +'+r.todayLeads,c:'#6366f1',icon:'📋'},
+    {l:'Assigned Leads',v:r.assigned,s:Math.round((r.assigned/(r.totalLeads||1))*100)+'% assigned',c:'#818cf8',icon:'✅'},
     {l:'Unassigned',v:r.unassigned,s:'Need assignment',c:r.unassigned>0?'#ef4444':'#22c55e',icon:'⚠️'},
-    {l:'Today Calls',v:r.todayCalls,s:'Week: '+r.weekCalls,c:'#3b82f6',icon:'📞'},
-    {l:'Total Revenue',v:fmt(r.totalRevenue),s:'All time',c:'#22c55e',icon:'💰'},
-    {l:'Month Revenue',v:fmt(r.monthRevenue),s:'This month',c:'#4ade80',icon:'📈'},
+    {l:'Today Calls',v:r.todayCalls,s:'Today only',c:'#3b82f6',icon:'📞'},
+    {l:'Week Calls',v:r.weekCalls,s:'Last 7 days',c:'#06b6d4',icon:'📅'},
+    {l:'Total Calls',v:r.totalCalls,s:'All time',c:'#8b5cf6',icon:'☎️'},
+    {l:'Total Revenue',v:fmt(r.totalRevenue),s:'All time collected',c:'#22c55e',icon:'💰'},
+    {l:'Month Revenue',v:fmt(r.monthRevenue),s:'This month paid',c:'#4ade80',icon:'📈'},
     {l:'Active Clients',v:r.activeClients,s:'Total: '+r.totalClients,c:'#06b6d4',icon:'👥'},
-    {l:'Pending Tasks',v:r.pendingTasks,s:'Overdue: '+r.overdueTasks,c:r.overdueTasks>0?'#ef4444':'#8b5cf6',icon:'✅'},
+    {l:'Pending Tasks',v:r.pendingTasks,s:'Overdue: '+r.overdueTasks,c:r.overdueTasks>0?'#ef4444':'#8b5cf6',icon:'📝'},
+    {l:'Proposals',v:r.totalProposals,s:'Accepted: '+r.acceptedProposals,c:'#a78bfa',icon:'📄'},
     {l:'Pending Invoices',v:fmt(r.pendingInvValue),s:r.pendingInvCount+' invoices',c:'#fb923c',icon:'🧾'},
   ].forEach(k=>{
     const card = el('div',{style:`background:var(--bg3);border:1px solid var(--border);border-radius:14px;padding:18px;border-top:3px solid ${k.c};transition:all 0.2s;position:relative;overflow:hidden`});
@@ -458,50 +462,98 @@ async function renderDashboard(container) {
     });
   });
 
-  // LEADERBOARD
+  // STAFF PERFORMANCE FULL SECTION
+  const staffCard = el('div',{className:'card',style:'margin-bottom:16px'});
+  staffCard.appendChild(el('div',{style:'display:flex;justify-content:space-between;align-items:center;margin-bottom:16px'},
+    el('div',{className:'card-title',style:'margin:0'},'👥 Staff Performance & Lead Assignment'),
+    el('div',{style:'display:flex;gap:8px'},
+      el('button',{className:'btn btn-primary btn-sm',onClick:()=>{STATE.tab='assign_leads';render();}},'+ Assign Leads'),
+      el('button',{className:'btn btn-ghost btn-sm',onClick:()=>{STATE.tab='team';render();}},'Manage Team')
+    )
+  ));
+
+  // Assignment progress bar
+  const assignPct = r.totalLeads>0 ? Math.round((r.assigned/r.totalLeads)*100) : 0;
+  staffCard.appendChild(el('div',{style:'margin-bottom:16px;background:var(--bg4);border-radius:10px;padding:14px'},
+    el('div',{style:'display:flex;justify-content:space-between;font-size:12px;margin-bottom:8px'},
+      el('div',{style:'font-weight:600;color:var(--text2)'},'Lead Assignment Progress'),
+      el('span',{style:'color:#6366f1;font-weight:800;font-size:14px'},assignPct+'%')
+    ),
+    el('div',{style:'background:var(--bg);border-radius:999px;height:10px;overflow:hidden;margin-bottom:8px'},
+      el('div',{style:`width:${assignPct}%;background:linear-gradient(90deg,#6366f1,#22c55e);height:100%;border-radius:999px;transition:width 1s ease`})
+    ),
+    el('div',{style:'display:flex;gap:20px;font-size:12px'},
+      el('span',{style:'color:#22c55e;font-weight:600'},'✓ Assigned: '+r.assigned),
+      el('span',{style:'color:#ef4444;font-weight:600'},'⚠ Unassigned: '+r.unassigned),
+      el('span',{style:'color:var(--muted)'},'Total: '+r.totalLeads)
+    )
+  ));
+
   if(r.staffStats && r.staffStats.length) {
-    const lbCard = el('div',{className:'card',style:'margin-bottom:16px'});
-    lbCard.appendChild(el('div',{style:'display:flex;justify-content:space-between;align-items:center;margin-bottom:14px'},
-      el('div',{className:'card-title',style:'margin:0'},'🏆 Staff Leaderboard'),
-      el('button',{className:'btn btn-primary btn-sm',onClick:()=>{STATE.tab='assign_leads';render();}},'+ Assign Leads')
-    ));
+    // Staff performance bars chart
+    const perfCanvas = document.createElement('canvas');
+    perfCanvas.style.cssText='width:100%;height:160px;display:block;margin-bottom:16px';
+    staffCard.appendChild(perfCanvas);
+
+    // Full staff table
     const medals=['🥇','🥈','🥉'];
-    r.staffStats.slice(0,5).forEach((s,i)=>{
+    const tw = el('div',{style:'overflow-x:auto'});
+    const tbl = el('table',{style:'width:100%;border-collapse:collapse;font-size:12px'});
+    tbl.appendChild(el('thead',{},el('tr',{style:'background:var(--bg4)'},
+      ...['','Staff','Leads','Pending','Called','Interested','Not Int.','Conv%','Today','Month Calls','Revenue','Progress'].map(h=>
+        el('th',{style:'padding:8px 10px;text-align:left;color:var(--muted);font-size:10px;font-weight:700;text-transform:uppercase;white-space:nowrap'},h)
+      )
+    )));
+    const tbody = el('tbody',{});
+    r.staffStats.forEach((s,i)=>{
       const cr=parseFloat(s.convRate||0);
       const crColor=cr>=15?'#22c55e':cr>=8?'#f59e0b':'#ef4444';
-      lbCard.appendChild(el('div',{style:`display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--border)`},
-        el('div',{style:'font-size:20px;width:28px;text-align:center'},medals[i]||String(i+1)),
-        el('div',{style:`width:36px;height:36px;border-radius:50%;background:${s.avatar_color||'#6366f1'}33;border:2px solid ${s.avatar_color||'#6366f1'};display:flex;align-items:center;justify-content:center;font-weight:800;color:${s.avatar_color||'#6366f1'};font-size:14px;flex-shrink:0`},s.name.charAt(0).toUpperCase()),
-        el('div',{style:'flex:1'},
-          el('div',{style:'font-weight:700;font-size:13px'},s.name),
-          el('div',{style:'font-size:11px;color:var(--muted2)'},s.monthCalls+' calls · '+s.interested+' interested')
+      const completion = s.total>0?Math.round(((s.total-s.pending)/s.total)*100):0;
+      tbody.appendChild(el('tr',{style:'cursor:pointer;border-top:1px solid var(--border)',onClick:()=>openStaffLeadsModal(s)},
+        el('td',{style:'padding:8px 10px;font-size:16px'},medals[i]||'#'+(i+1)),
+        el('td',{style:'padding:8px 10px'},
+          el('div',{style:'display:flex;align-items:center;gap:8px'},
+            el('div',{style:`width:28px;height:28px;border-radius:50%;background:${s.avatar_color||'#6366f1'}33;border:2px solid ${s.avatar_color||'#6366f1'};display:flex;align-items:center;justify-content:center;font-weight:800;color:${s.avatar_color||'#6366f1'};font-size:12px`},s.name.charAt(0).toUpperCase()),
+            el('div',{style:'font-weight:700'},s.name)
+          )
         ),
-        el('div',{style:'text-align:right'},
-          el('div',{style:`font-size:18px;font-weight:900;color:${crColor}`},s.convRate+'%'),
-          el('div',{style:'font-size:10px;color:var(--muted)'},'conv rate'),
-          el('div',{style:'font-size:12px;color:#4ade80;font-weight:600'},fmt(s.revenue||0))
+        el('td',{style:'padding:8px 10px;color:#6366f1;font-weight:700'},s.total),
+        el('td',{style:'padding:8px 10px;color:#f59e0b'},s.pending),
+        el('td',{style:'padding:8px 10px;color:#3b82f6'},s.called),
+        el('td',{style:'padding:8px 10px;color:#22c55e;font-weight:700'},s.interested),
+        el('td',{style:'padding:8px 10px;color:#ef4444'},s.not_interested),
+        el('td',{style:`padding:8px 10px;font-weight:800;font-size:13px;color:${crColor}`},s.convRate+'%'),
+        el('td',{style:'padding:8px 10px;color:var(--muted2)'},s.todayCalls+'/'+s.daily_target),
+        el('td',{style:'padding:8px 10px;color:#06b6d4;font-weight:600'},s.monthCalls||0),
+        el('td',{style:'padding:8px 10px;color:#4ade80;font-weight:600'},fmt(s.revenue||0)),
+        el('td',{style:'padding:8px 10px'},
+          el('div',{style:'background:var(--bg);border-radius:999px;height:6px;width:80px;overflow:hidden'},
+            el('div',{style:`width:${completion}%;background:linear-gradient(90deg,#6366f1,#22c55e);height:100%;border-radius:999px`})
+          ),
+          el('div',{style:'color:var(--muted);font-size:10px;margin-top:2px'},completion+'%')
         )
       ));
     });
-    // Assignment progress
-    const assignPct = r.totalLeads>0 ? Math.round((r.assigned/r.totalLeads)*100) : 0;
-    lbCard.appendChild(el('div',{style:'margin-top:14px;padding-top:14px;border-top:1px solid var(--border)'},
-      el('div',{style:'display:flex;justify-content:space-between;font-size:12px;margin-bottom:6px'},
-        el('span',{style:'color:var(--muted2)'},'Lead Assignment: '+r.assigned+' of '+r.totalLeads),
-        el('span',{style:'color:#6366f1;font-weight:700'},assignPct+'%')
-      ),
-      el('div',{style:'background:var(--bg);border-radius:999px;height:8px;overflow:hidden'},
-        el('div',{style:`width:${assignPct}%;background:linear-gradient(90deg,#6366f1,#22c55e);height:100%;border-radius:999px`})
-      )
-    ));
-    container.appendChild(lbCard);
+    tbl.appendChild(tbody);
+    tw.appendChild(tbl);
+    staffCard.appendChild(tw);
+    staffCard.appendChild(el('p',{style:'color:var(--muted);font-size:11px;margin-top:8px'},'💡 Click any row to see that staff member\'s leads'));
+
+    // Draw staff performance bar chart
+    requestAnimationFrame(()=>{
+      const names = r.staffStats.map(s=>s.name.split(' ')[0]);
+      const calls = r.staffStats.map(s=>s.monthCalls||0);
+      const convRates = r.staffStats.map(s=>parseFloat(s.convRate||0));
+      drawBarChart(perfCanvas, names, calls, '#6366f1', '#06b6d4');
+    });
   } else {
-    container.appendChild(el('div',{className:'card',style:'margin-bottom:16px;text-align:center;padding:30px'},
+    staffCard.appendChild(el('div',{style:'text-align:center;padding:30px'},
       el('div',{style:'font-size:32px;margin-bottom:10px'},'👥'),
       el('div',{style:'color:var(--muted);font-size:14px;margin-bottom:12px'},'No staff members yet. Add your team to start assigning leads.'),
       el('button',{className:'btn btn-primary',onClick:()=>{STATE.tab='team';render();}},'+ Add Team Members')
     ));
   }
+  container.appendChild(staffCard);
 
   // HOT LEADS
   if(r.hotLeads && r.hotLeads.length) {
