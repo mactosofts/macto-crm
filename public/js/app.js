@@ -1038,8 +1038,14 @@ async function renderAdminLeads(container){
   const assignSel=h('select',{className:'inp inp-sm'});
   [['','Select staff…'],...users.filter(u=>u.role==='staff').map(u=>[u.id,u.name])].forEach(([v,l])=>assignSel.appendChild(app('option',{value:v},l)));
   const assignBtn=app('button',{className:'btn btn-primary btn-sm',onClick:doAssign},'Assign Selected');
+  const delSelBtn=app('button',{className:'btn btn-danger btn-sm',onClick:doBulkDelete},'🗑️ Delete Selected');
   const assignMsg=h('div',{});
-  assignCard.appendChild(app('div',{style:'display:flex;gap:8px;align-items:center;flex-wrap:wrap'},app('span',{style:'color:var(--muted);font-size:13px;font-weight:600'},'Bulk Assign:'),assignSel,assignBtn));
+  assignCard.appendChild(app('div',{style:'display:flex;gap:8px;align-items:center;flex-wrap:wrap'},
+    app('span',{style:'color:var(--muted);font-size:13px;font-weight:600'},'Bulk:'),
+    assignSel,assignBtn,
+    app('span',{style:'color:var(--muted)'},'|'),
+    delSelBtn
+  ));
   assignCard.appendChild(assignMsg);
   container.appendChild(assignCard);
 
@@ -1079,6 +1085,17 @@ async function renderAdminLeads(container){
     const r=await api.post('/leads/assign',{lead_ids:[...selectedIds],staff_id:parseInt(assignSel.value)});
     if(r.ok){assignMsg.className='alert alert-success';assignMsg.textContent='✓ '+r.count+' leads assigned.';selectedIds.clear();setTimeout(()=>{assignMsg.className='';assignMsg.textContent='';},3000);load();}
     else{assignMsg.className='alert alert-error';assignMsg.textContent=r.error;}
+  }
+
+  async function doBulkDelete(){
+    if(!selectedIds.size){assignMsg.className='alert alert-error';assignMsg.textContent='Select leads to delete first.';return;}
+    if(!confirm(`Permanently delete ${selectedIds.size} selected leads? This cannot be undone!`)) return;
+    delSelBtn.disabled=true;delSelBtn.textContent='Deleting…';
+    const r=await fetch('/api/leads/bulk-delete',{method:'DELETE',headers:{'Content-Type':'application/json'},credentials:'include',body:JSON.stringify({lead_ids:[...selectedIds]})});
+    const data=await r.json();
+    delSelBtn.disabled=false;delSelBtn.textContent='🗑️ Delete Selected';
+    if(data.ok){assignMsg.className='alert alert-success';assignMsg.textContent='✓ Deleted '+data.count+' leads.';selectedIds.clear();setTimeout(()=>{assignMsg.className='';assignMsg.textContent='';},3000);load();}
+    else{assignMsg.className='alert alert-error';assignMsg.textContent=data.error;}
   }
 
   let st;searchInp.addEventListener('input',()=>{clearTimeout(st);st=setTimeout(()=>{filters.search=searchInp.value;page=1;load();},400);});
@@ -2923,6 +2940,193 @@ async function sendWhatsAppDocument(type, docNo, amount, clientPhone, clientName
         else if(STATE.tab==='my_tasks') renderTasks(main);
         else if(STATE.tab==='my_stats') renderMyStats(main);
         // Auditor routes
+        else if(STATE.tab==='audit_dash') renderAuditDash(main);
+        else if(STATE.tab==='new_audit') renderNewAudit(main);
+        else if(STATE.tab==='my_audits') renderAudits(main,'auditor');
+      });
+    };
+    window.render();
+  };
+  window.boot();
+})();
+
+// ── MANAGE IMPORTS / BULK DELETE ─────────────────────────────────
+async function renderManageImports(container) {
+  container.innerHTML='<div class="loading-center"><div class="spinner"></div></div>';
+  const batchR = await api.get('/leads/import-batches');
+  container.innerHTML='';
+  container.appendChild(app('div',{className:'page-title'},'🗑️ Manage Imported Leads'));
+
+  container.appendChild(app('div',{className:'alert alert-warn',style:'margin-bottom:16px'},'⚠️ Warning: Deleting leads is permanent and cannot be undone. Only delete leads that were accidentally imported.'));
+
+  const mDiv = h('div',{});
+  container.appendChild(mDiv);
+
+  // Quick delete options
+  const quickCard = app('div',{className:'card',style:'margin-bottom:16px'},
+    app('div',{className:'card-title'},'⚡ Quick Delete Options')
+  );
+
+  // Delete all unassigned
+  const delUnassignedBtn = app('button',{className:'btn btn-danger',onClick:async()=>{
+    const r2 = await api.get('/leads/unassigned?limit=1');
+    const count = r2.total || 0;
+    if(!count){mDiv.className='alert alert-info';mDiv.textContent='No unassigned leads found.';return;}
+    if(!confirm(`Delete ALL ${count} unassigned leads? This cannot be undone!`)) return;
+    delUnassignedBtn.disabled=true;delUnassignedBtn.textContent='Deleting…';
+    const r = await api.del('/leads/bulk-delete');
+    // Use POST with body instead
+    const r3 = await fetch('/api/leads/bulk-delete',{method:'DELETE',headers:{'Content-Type':'application/json'},credentials:'include',body:JSON.stringify({delete_all_unassigned:true})});
+    const data = await r3.json();
+    delUnassignedBtn.disabled=false;delUnassignedBtn.textContent='🗑️ Delete All Unassigned';
+    if(data.ok){mDiv.className='alert alert-success';mDiv.textContent='✓ Deleted '+data.count+' unassigned leads.';setTimeout(()=>renderManageImports(container),2000);}
+    else{mDiv.className='alert alert-error';mDiv.textContent=data.error;}
+  }},'🗑️ Delete All Unassigned Leads');
+
+  quickCard.appendChild(app('div',{style:'display:flex;gap:10px;flex-wrap:wrap;align-items:center'},
+    app('div',{},
+      app('div',{style:'font-size:13px;font-weight:600;margin-bottom:4px'},'Delete Unassigned Leads'),
+      app('div',{style:'color:var(--muted);font-size:12px;margin-bottom:8px'},'Remove all leads that have not been assigned to any staff yet'),
+      delUnassignedBtn
+    )
+  ));
+  container.appendChild(quickCard);
+
+  // Delete by import batch
+  const batches = batchR.ok ? batchR.data : [];
+  if(batches.length) {
+    const batchCard = app('div',{className:'card'},app('div',{className:'card-title'},'📅 Delete by Import Date'));
+    batchCard.appendChild(app('p',{style:'color:var(--muted);font-size:12px;margin-bottom:12px'},'Each row shows leads imported on a specific date. Click Delete to remove that batch.'));
+
+    const tw = app('div',{className:'table-wrap'},app('table',{},
+      app('thead',{},app('tr',{},...['Date','Source','Count','Action'].map(c=>app('th',{},c)))),
+      app('tbody',{id:'batch-tbody'})
+    ));
+    const tbody = tw.querySelector('#batch-tbody');
+
+    batches.forEach(b=>{
+      const sourceColors={cold_call:'#3b82f6',ads:'#f59e0b',import:'#8b5cf6',referral:'#22c55e',audit:'#06b6d4',manual:'#94a3b8'};
+      const sc = sourceColors[b.source]||'#94a3b8';
+      const delBtn = app('button',{className:'btn btn-danger btn-sm',onClick:async()=>{
+        if(!confirm(`Delete ${b.count} leads from ${b.date} (${b.source})? Cannot undo!`)) return;
+        delBtn.disabled=true;delBtn.textContent='Deleting…';
+        const r = await fetch('/api/leads/delete-by-date',{method:'DELETE',headers:{'Content-Type':'application/json'},credentials:'include',body:JSON.stringify({date:b.date,source:b.source})});
+        const data = await r.json();
+        if(data.ok){mDiv.className='alert alert-success';mDiv.textContent='✓ Deleted '+data.count+' leads from '+b.date;setTimeout(()=>renderManageImports(container),1500);}
+        else{mDiv.className='alert alert-error';mDiv.textContent=data.error;delBtn.disabled=false;delBtn.textContent='Delete';}
+      }},'🗑️ Delete');
+      tbody.appendChild(app('tr',{},
+        app('td',{style:'font-weight:600'},b.date),
+        app('td',{},app('span',{style:`background:${sc}22;color:${sc};padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600`},b.source)),
+        app('td',{style:'font-weight:700;color:#ef4444'},b.count+' leads'),
+        app('td',{},delBtn)
+      ));
+    });
+    batchCard.appendChild(tw);
+    container.appendChild(batchCard);
+  } else {
+    container.appendChild(app('div',{style:'text-align:center;padding:40px;color:var(--muted)'},'No import batches found.'));
+  }
+}
+
+
+// ── FINAL V6 BOOT WITH MANAGE IMPORTS ────────────────────────────
+(function() {
+  window.boot = async function() {
+    await checkSession();
+    window.render = function() {
+      const container = document.getElementById('app');
+      if (!STATE.user) { container.innerHTML=''; container.appendChild(renderLogin()); return; }
+      const user = STATE.user;
+      const isAdmin = user.role==='admin';
+      const isStaff = user.role==='staff';
+      const isAuditor = user.role==='auditor';
+
+      let tabs = [];
+      if(isAdmin) {
+        tabs = [
+          {section:'Overview'},{id:'dashboard',label:'🏠 Dashboard',icon:'dash'},{id:'revenue',label:'💰 Revenue',icon:'money'},
+          {section:'Leads'},{id:'assign_leads',label:'📋 Assign Leads',icon:'assign'},{id:'leads',label:'All Leads',icon:'assign'},{id:'import',label:'📤 Import',icon:'upload'},{id:'manage_imports',label:'🗑️ Manage Imports',icon:'upload'},
+          {section:'Sales'},{id:'dialer',label:'📞 Dialer',icon:'phone'},{id:'pipeline',label:'📊 Pipeline',icon:'pipeline'},{id:'clients',label:'👥 Clients',icon:'users'},
+          {section:'Documents'},{id:'proposals',label:'📄 Proposals',icon:'audit'},{id:'invoices',label:'🧾 Invoices',icon:'money'},
+          {section:'Work'},{id:'tasks_admin',label:'✅ Tasks',icon:'check'},
+          {section:'Audits'},{id:'audits',label:'🔍 Audits',icon:'audit'},
+          {section:'Insights'},{id:'analytics',label:'📈 Analytics',icon:'chart'},
+          {section:'Admin'},{id:'staff',label:'👥 Team',icon:'users'},{id:'password',label:'🔐 Password',icon:'users'},
+        ];
+      } else if(isStaff) {
+        tabs = [
+          {section:'My Work'},{id:'staff_dash',label:'🏠 Dashboard',icon:'dash'},{id:'dialer',label:'📞 Dialer',icon:'phone'},
+          {section:'Leads'},{id:'my_leads',label:'My Leads',icon:'assign'},{id:'followups',label:'🔔 Follow-ups',icon:'audit'},
+          {section:'Clients'},{id:'my_clients',label:'👥 My Clients',icon:'users'},
+          {section:'Documents'},{id:'proposals',label:'📄 Proposals',icon:'audit'},{id:'invoices',label:'🧾 Invoices',icon:'money'},
+          {section:'Work'},{id:'my_tasks',label:'✅ My Tasks',icon:'check'},
+          {section:'Stats'},{id:'my_stats',label:'📊 My Stats',icon:'chart'},{id:'password',label:'🔐 Password',icon:'users'},
+        ];
+      } else {
+        tabs = [
+          {section:'Audit'},{id:'audit_dash',label:'Dashboard',icon:'dash'},{id:'new_audit',label:'+ New Audit',icon:'plus'},{id:'my_audits',label:'My Audits',icon:'audit'},
+          {id:'password',label:'🔐 Password',icon:'users'},
+        ];
+      }
+
+      const flatTabs = tabs.filter(t=>t.id);
+      if(!flatTabs.find(t=>t.id===STATE.tab)) STATE.tab = flatTabs[0]?.id||'dashboard';
+
+      const topbar = app('div',{className:'topbar'},
+        app('div',{className:'brand'},app('div',{className:'brand-logo'},'🚀 Macto AI CRM'),app('span',{className:`role-pill ${user.role}`},user.role.toUpperCase())),
+        app('div',{className:'topbar-right'},
+          app('span',{id:'notif-bell',className:'btn btn-ghost btn-sm',style:'position:relative;font-size:16px'},'🔔'),
+          app('span',{className:'topbar-user'},'Hi, '+user.name),
+          app('button',{className:'btn btn-ghost btn-sm',onClick:async()=>{await api.post('/logout');STATE.user=null;window.render();}},'Logout')
+        )
+      );
+
+      const sidebar = app('div',{className:'sidebar'});
+      tabs.forEach(t=>{
+        if(t.section) sidebar.appendChild(app('div',{className:'nav-section'},t.section));
+        else {
+          const btn = app('button',{className:'nav-item'+(STATE.tab===t.id?' active':''),onClick:()=>{STATE.tab=t.id;window.render();}},icon(t.icon,15),t.label);
+          sidebar.appendChild(btn);
+        }
+      });
+
+      const mobileNav = app('div',{className:'sidebar-mobile'});
+      flatTabs.slice(0,5).forEach(t=>{
+        const label = t.label.replace(/[^\w\s]/g,'').trim().split(' ')[0];
+        const btn=app('button',{className:'nav-item-mob'+(STATE.tab===t.id?' active':''),onClick:()=>{STATE.tab=t.id;window.render();}},icon(t.icon,18),label);
+        mobileNav.appendChild(btn);
+      });
+
+      const main = h('div',{className:'main',id:'main-content'});
+      container.innerHTML='';
+      container.appendChild(app('div',{},topbar,app('div',{className:'layout'},sidebar,main),mobileNav));
+      const bellBtn=document.getElementById('notif-bell');
+      if(bellBtn) loadNotifications(bellBtn);
+
+      requestAnimationFrame(()=>{
+        if(STATE.tab==='dashboard') renderAdminDashV5(main);
+        else if(STATE.tab==='revenue') renderRevenue(main);
+        else if(STATE.tab==='assign_leads') renderAssignLeads(main);
+        else if(STATE.tab==='leads') renderAdminLeads(main);
+        else if(STATE.tab==='import') renderImport(main);
+        else if(STATE.tab==='manage_imports') renderManageImports(main);
+        else if(STATE.tab==='dialer') renderDialer(main);
+        else if(STATE.tab==='pipeline') renderPipeline(main);
+        else if(STATE.tab==='clients') renderAllClients(main);
+        else if(STATE.tab==='proposals') renderProposals(main);
+        else if(STATE.tab==='invoices') renderInvoices(main);
+        else if(STATE.tab==='tasks_admin') renderTasks(main);
+        else if(STATE.tab==='audits') renderAudits(main,'admin');
+        else if(STATE.tab==='analytics') renderAnalyticsV5(main);
+        else if(STATE.tab==='staff') renderTeam(main);
+        else if(STATE.tab==='password') renderChangePassword(main);
+        else if(STATE.tab==='staff_dash') renderStaffDashboard(main);
+        else if(STATE.tab==='my_leads') renderMyLeads(main);
+        else if(STATE.tab==='followups') renderFollowups(main);
+        else if(STATE.tab==='my_clients') renderMyClients(main);
+        else if(STATE.tab==='my_tasks') renderTasks(main);
+        else if(STATE.tab==='my_stats') renderMyStats(main);
         else if(STATE.tab==='audit_dash') renderAuditDash(main);
         else if(STATE.tab==='new_audit') renderNewAudit(main);
         else if(STATE.tab==='my_audits') renderAudits(main,'auditor');
