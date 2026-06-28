@@ -317,10 +317,17 @@ router.delete('/leads/bulk', apiAdmin, async (req, res) => {
   try {
     const { lead_ids, filter_assigned, filter_source, filter_date } = req.body;
     let where = {};
-    if (lead_ids?.length) where.id = { [Op.in]: lead_ids };
-    else if (filter_assigned === 'unassigned') where.assigned_to = null;
-    else if (filter_source) where.source = filter_source;
-    else if (filter_date) { where[Op.and] = [sequelize.where(sequelize.fn('DATE', sequelize.col('createdAt')), filter_date)]; }
+    if (lead_ids?.length) {
+      where.id = { [Op.in]: lead_ids };
+    } else if (filter_assigned === 'unassigned') {
+      where.assigned_to = null;
+      if (filter_source) where.source = filter_source;
+      if (filter_date) where[Op.and] = [sequelize.where(sequelize.fn('DATE', sequelize.col('createdAt')), filter_date)];
+    } else {
+      // Combine source + date filters together
+      if (filter_source) where.source = filter_source;
+      if (filter_date) where[Op.and] = [sequelize.where(sequelize.fn('DATE', sequelize.col('createdAt')), filter_date)];
+    }
     if (!Object.keys(where).length) return res.json({ ok: false, error: 'No filter specified' });
     const count = await Lead.destroy({ where });
     res.json({ ok: true, count });
