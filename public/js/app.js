@@ -754,7 +754,7 @@ async function renderAllLeads(container) {
   container.innerHTML = '';
   container.appendChild(el('div',{style:'display:flex;justify-content:space-between;align-items:center;margin-bottom:20px'},
     el('div',{className:'page-title',style:'margin:0'},'📋 All Leads'),
-    el('button',{className:'btn btn-ghost btn-sm',onClick:()=>{window.location.href='/api/export/leads';},'📥 Export Excel')
+    el('button',{className:'btn btn-ghost btn-sm',onClick:()=>{window.location.href='/api/export/leads';}},'📥 Export Excel')
   ));
 
   let page=1, filters={search:'',status:'all',category:'all',source:'all',assigned:'all'};
@@ -2793,3 +2793,5 @@ async function renderKanban(container) {
   });
   container.appendChild(el('div',{style:'overflow-x:auto'},board));
 }
+
+boot();
