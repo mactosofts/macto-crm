@@ -927,7 +927,8 @@ async function renderAllLeads(container) {
 // ── MANAGE IMPORTS ───────────────────────────────────────────────
 async function renderManageImports(container) {
   container.innerHTML = loading();
-  const [batchR, leadsR] = await Promise.all([api.get('/leads/batches'), api.get('/leads?limit=1')]);
+  const batchR = await api.get('/leads/batches');
+  const leadsR = await api.get('/leads/stats');
   container.innerHTML = '';
 
   container.appendChild(el('div',{style:'display:flex;justify-content:space-between;align-items:center;margin-bottom:20px'},
@@ -940,8 +941,8 @@ async function renderManageImports(container) {
   const mDiv = el('div',{});
   container.appendChild(mDiv);
 
-  const batches = batchR.ok ? batchR.data : [];
-  const totalLeads = leadsR.total || 0;
+  const batches = batchR.ok ? (batchR.data || []) : [];
+  const totalLeads = leadsR.ok ? (leadsR.total || 0) : 0;
 
   // Summary cards
   const sumGrid = el('div',{style:'display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:12px;margin-bottom:20px'});
