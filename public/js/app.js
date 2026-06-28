@@ -517,14 +517,14 @@ async function renderDashboard(container) {
             el('div',{style:'font-weight:700'},s.name)
           )
         ),
-        el('td',{style:'padding:8px 10px;color:#6366f1;font-weight:700'},s.total),
-        el('td',{style:'padding:8px 10px;color:#f59e0b'},s.pending),
-        el('td',{style:'padding:8px 10px;color:#3b82f6'},s.called),
-        el('td',{style:'padding:8px 10px;color:#22c55e;font-weight:700'},s.interested),
-        el('td',{style:'padding:8px 10px;color:#ef4444'},s.not_interested),
-        el('td',{style:`padding:8px 10px;font-weight:800;font-size:13px;color:${crColor}`},s.convRate+'%'),
-        el('td',{style:'padding:8px 10px;color:var(--muted2)'},s.todayCalls+'/'+s.daily_target),
-        el('td',{style:'padding:8px 10px;color:#06b6d4;font-weight:600'},s.monthCalls||0),
+        el('td',{style:'padding:8px 10px;color:#6366f1;font-weight:700'},String(s.total||0)),
+        el('td',{style:'padding:8px 10px;color:#f59e0b'},String(s.pending||0)),
+        el('td',{style:'padding:8px 10px;color:#3b82f6'},String(s.called||0)),
+        el('td',{style:'padding:8px 10px;color:#22c55e;font-weight:700'},String(s.interested||0)),
+        el('td',{style:'padding:8px 10px;color:#ef4444'},String(s.not_interested||0)),
+        el('td',{style:`padding:8px 10px;font-weight:800;font-size:13px;color:${crColor}`},String(s.convRate||0)+'%'),
+        el('td',{style:'padding:8px 10px;color:var(--muted2)'},String(s.todayCalls||0)+'/'+String(s.daily_target||50)),
+        el('td',{style:'padding:8px 10px;color:#06b6d4;font-weight:600'},String(s.monthCalls||0)),
         el('td',{style:'padding:8px 10px;color:#4ade80;font-weight:600'},fmt(s.revenue||0)),
         el('td',{style:'padding:8px 10px'},
           el('div',{style:'background:var(--bg);border-radius:999px;height:6px;width:80px;overflow:hidden'},
@@ -928,144 +928,109 @@ async function renderAllLeads(container) {
 async function renderManageImports(container) {
   container.innerHTML = loading();
   const batchR = await api.get('/leads/batches');
-  const leadsR = await api.get('/leads/stats');
   container.innerHTML = '';
 
   container.appendChild(el('div',{style:'display:flex;justify-content:space-between;align-items:center;margin-bottom:20px'},
-    el('div',{className:'page-title',style:'margin:0'},'🗑️ Manage Imports'),
+    el('div',{className:'page-title',style:'margin:0'},'Manage Imports'),
     el('button',{className:'btn btn-primary btn-sm',onClick:()=>{STATE.tab='import';render();}},'+ New Import')
   ));
 
-  container.appendChild(el('div',{className:'alert alert-warn',style:'margin-bottom:16px'},'⚠️ Warning: Deleting leads is PERMANENT and cannot be undone. Assigned leads will also be deleted.'));
+  container.appendChild(el('div',{className:'alert alert-warn',style:'margin-bottom:16px'},'Warning: Deleting leads is PERMANENT and cannot be undone.'));
 
-  const mDiv = el('div',{});
+  const mDiv = el('div',{style:'margin-bottom:12px'});
   container.appendChild(mDiv);
 
-  const batches = batchR.ok ? (batchR.data || []) : [];
-  const totalLeads = leadsR.ok ? (leadsR.total || 0) : 0;
+  if(!batchR.ok) {
+    container.appendChild(alertEl('error', 'Failed to load batches: '+(batchR.error||'Unknown error')));
+    return;
+  }
 
-  // Summary cards
-  const sumGrid = el('div',{style:'display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:12px;margin-bottom:20px'});
-  [
-    {l:'Total Batches',v:batches.length,c:'#6366f1'},
-    {l:'Total Leads',v:totalLeads,c:'#3b82f6'},
-    {l:'Import Sources',v:[...new Set(batches.map(b=>b.source))].length,c:'#06b6d4'},
-  ].forEach(k=>{
-    sumGrid.appendChild(el('div',{style:`background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px;border-top:3px solid ${k.c}`},
-      el('div',{style:`font-size:26px;font-weight:900;color:${k.c}`},String(k.v)),
-      el('div',{style:'font-size:11px;color:var(--muted2);margin-top:6px;font-weight:600;text-transform:uppercase'},k.l)
-    ));
-  });
-  container.appendChild(sumGrid);
+  const batches = batchR.data || [];
 
-  // Quick actions card
+  // Delete all unassigned button
   const qCard = el('div',{className:'card',style:'margin-bottom:16px'});
-  qCard.appendChild(el('div',{className:'card-title'},'⚡ Quick Actions'));
-  const qRow = el('div',{style:'display:flex;gap:12px;flex-wrap:wrap'});
-
-  // Delete all unassigned
+  qCard.appendChild(el('div',{className:'card-title'},'Quick Actions'));
   const delUBtn = el('button',{className:'btn btn-danger',onClick:async()=>{
-    const r2 = await api.get('/leads?assigned=unassigned&limit=1');
-    const count = r2.total||0;
-    if(!count){mDiv.className='alert alert-info';mDiv.textContent='No unassigned leads found.';return;}
-    if(!confirm(`Permanently delete ALL ${count} unassigned leads? This cannot be undone!`))return;
-    delUBtn.disabled=true;delUBtn.textContent='Deleting...';
+    if(!confirm('Delete ALL unassigned leads? Cannot undo!')) return;
+    delUBtn.disabled=true; delUBtn.textContent='Deleting...';
     const r = await api.delBody('/leads/bulk',{filter_assigned:'unassigned'});
-    delUBtn.disabled=false;delUBtn.textContent='🗑️ Delete All Unassigned';
-    if(r.ok){mDiv.className='alert alert-success';mDiv.textContent='✅ Deleted '+r.count+' unassigned leads.';setTimeout(()=>renderManageImports(container),1500);}
+    delUBtn.disabled=false; delUBtn.textContent='Delete All Unassigned';
+    if(r.ok){mDiv.className='alert alert-success';mDiv.textContent='Deleted '+r.count+' unassigned leads.';setTimeout(()=>renderManageImports(container),1500);}
     else{mDiv.className='alert alert-error';mDiv.textContent=r.error;}
-  }},'🗑️ Delete All Unassigned');
-
-  qRow.appendChild(el('div',{},
-    el('div',{style:'font-size:12px;font-weight:600;margin-bottom:4px'},'Remove Unassigned Leads'),
-    el('div',{style:'color:var(--muted);font-size:11px;margin-bottom:8px'},'Delete all leads not yet assigned to any staff'),
-    delUBtn
-  ));
-  qCard.appendChild(qRow);
+  }},'Delete All Unassigned Leads');
+  qCard.appendChild(delUBtn);
   container.appendChild(qCard);
 
-  // Batch list - each batch individually
+  // Batch cards
   if(!batches.length) {
     container.appendChild(el('div',{className:'card'},
-      el('div',{style:'text-align:center;padding:40px'},
-        el('div',{style:'font-size:40px;margin-bottom:12px'},'📭'),
-        el('div',{style:'color:var(--muted);font-size:14px;margin-bottom:12px'},'No import batches found.'),
-        el('button',{className:'btn btn-primary',onClick:()=>{STATE.tab='import';render();}},'+ Import Leads')
-      )
+      el('div',{style:'text-align:center;padding:40px;color:var(--muted)'},'No import batches found. Import leads first.')
     ));
     return;
   }
 
   const bCard = el('div',{className:'card'});
-  bCard.appendChild(el('div',{style:'display:flex;justify-content:space-between;align-items:center;margin-bottom:14px'},
-    el('div',{className:'card-title',style:'margin:0'},'📦 Import Batches ('+batches.length+' batches)'),
-    el('div',{style:'font-size:12px;color:var(--muted)'},'Select individual batches to delete or view')
-  ));
+  bCard.appendChild(el('div',{className:'card-title'},'Import Batches ('+batches.length+')'));
 
-  const srcColors={cold_call:'#3b82f6',ads:'#f59e0b',import:'#8b5cf6',referral:'#22c55e',audit:'#06b6d4',manual:'#94a3b8'};
-
-  // Show each batch as a card with options
   batches.forEach(b=>{
-    const sc = srcColors[b.source]||'#94a3b8';
-    const assignedCount = parseInt(b.count) - parseInt(b.unassigned||0);
-    const batchDiv = el('div',{style:'display:flex;align-items:center;gap:12px;padding:14px;background:var(--bg4);border-radius:10px;margin-bottom:10px;border:1px solid var(--border)'});
-    
-    // Source badge
-    batchDiv.appendChild(el('div',{style:`background:${sc}22;color:${sc};border:1px solid ${sc}44;border-radius:8px;padding:8px 12px;font-size:12px;font-weight:700;text-align:center;min-width:80px;flex-shrink:0`},
-      el('div',{},b.source.replace('_',' ').toUpperCase()),
-      el('div',{style:'font-size:10px;margin-top:2px;opacity:0.8'},b.date)
+    const date = b.date || '';
+    const source = b.source || 'import';
+    const count = parseInt(b.count||0);
+    const unassigned = parseInt(b.unassigned||0);
+    const assigned = count - unassigned;
+    const srcColors={cold_call:'#3b82f6',ads:'#f59e0b',import:'#8b5cf6',referral:'#22c55e',audit:'#06b6d4',manual:'#94a3b8'};
+    const sc = srcColors[source]||'#8b5cf6';
+
+    const row = el('div',{style:'display:flex;align-items:center;gap:14px;padding:14px;background:var(--bg4);border-radius:10px;margin-bottom:10px;border:1px solid var(--border);flex-wrap:wrap'});
+
+    // Source + date
+    row.appendChild(el('div',{style:`background:${sc}22;color:${sc};border:1px solid ${sc}44;border-radius:8px;padding:8px 12px;text-align:center;min-width:90px;flex-shrink:0`},
+      el('div',{style:'font-size:11px;font-weight:700;text-transform:uppercase'},source.replace('_',' ')),
+      el('div',{style:'font-size:11px;margin-top:2px;opacity:0.8'},date)
     ));
 
     // Stats
-    batchDiv.appendChild(el('div',{style:'flex:1'},
-      el('div',{style:'display:flex;gap:16px;flex-wrap:wrap;margin-bottom:6px'},
-        el('div',{},el('div',{style:'font-size:18px;font-weight:800;color:var(--text)'},b.count),el('div',{style:'font-size:10px;color:var(--muted);text-transform:uppercase'},'Total')),
-        el('div',{},el('div',{style:'font-size:18px;font-weight:800;color:#22c55e'},assignedCount),el('div',{style:'font-size:10px;color:var(--muted);text-transform:uppercase'},'Assigned')),
-        el('div',{},el('div',{style:'font-size:18px;font-weight:800;color:#ef4444'},b.unassigned||0),el('div',{style:'font-size:10px;color:var(--muted);text-transform:uppercase'},'Unassigned')),
+    row.appendChild(el('div',{style:'flex:1;min-width:180px'},
+      el('div',{style:'display:flex;gap:16px;margin-bottom:8px'},
+        el('div',{},el('div',{style:'font-size:20px;font-weight:800;color:var(--text)'},String(count)),el('div',{style:'font-size:10px;color:var(--muted);text-transform:uppercase'},'Total')),
+        el('div',{},el('div',{style:'font-size:20px;font-weight:800;color:#22c55e'},String(assigned)),el('div',{style:'font-size:10px;color:var(--muted);text-transform:uppercase'},'Assigned')),
+        el('div',{},el('div',{style:'font-size:20px;font-weight:800;color:#ef4444'},String(unassigned)),el('div',{style:'font-size:10px;color:var(--muted);text-transform:uppercase'},'Unassigned'))
       ),
-      // Progress bar
-      el('div',{style:'background:var(--bg);border-radius:999px;height:5px;overflow:hidden;max-width:200px'},
-        el('div',{style:`width:${b.count>0?Math.round((assignedCount/b.count)*100):0}%;background:#22c55e;height:100%;border-radius:999px`})
+      el('div',{style:'background:var(--bg);border-radius:999px;height:5px;overflow:hidden'},
+        el('div',{style:`width:${count>0?Math.round((assigned/count)*100):0}%;background:#22c55e;height:100%;border-radius:999px`})
       )
     ));
 
-    // Action buttons
-    const actDiv = el('div',{style:'display:flex;flex-direction:column;gap:6px;flex-shrink:0'});
-    
-    // View leads button
-    actDiv.appendChild(el('button',{className:'btn btn-ghost btn-sm',onClick:()=>{
-      STATE.tab='all_leads';
-      render();
-    }},'👁️ View Leads'));
+    // Buttons
+    const btns = el('div',{style:'display:flex;flex-direction:column;gap:6px;flex-shrink:0'});
 
-    // Delete only unassigned from this batch
-    if(parseInt(b.unassigned||0)>0) {
-      const delUnassBtn = el('button',{className:'btn btn-danger btn-xs',onClick:async()=>{
-        if(!confirm(`Delete ${b.unassigned} UNASSIGNED leads from ${b.date} (${b.source})? Cannot undo!`))return;
-        delUnassBtn.disabled=true;delUnassBtn.textContent='Deleting...';
-        const r = await api.delBody('/leads/bulk',{filter_source:b.source,filter_date:b.date,filter_assigned:'unassigned'});
-        if(r.ok){mDiv.className='alert alert-success';mDiv.textContent='✅ Deleted '+r.count+' unassigned leads from this batch.';setTimeout(()=>renderManageImports(container),1500);}
-        else{mDiv.className='alert alert-error';mDiv.textContent=r.error;delUnassBtn.disabled=false;delUnassBtn.textContent='Delete Unassigned';}
-      }},'🗑️ Delete Unassigned ('+b.unassigned+')');
-      actDiv.appendChild(delUnassBtn);
+    if(unassigned>0) {
+      const d1 = el('button',{className:'btn btn-danger btn-sm',onClick:async()=>{
+        if(!confirm('Delete '+unassigned+' unassigned leads from this batch?')) return;
+        d1.disabled=true; d1.textContent='Deleting...';
+        const r = await api.delBody('/leads/bulk',{filter_source:source,filter_date:date});
+        if(r.ok){mDiv.className='alert alert-success';mDiv.textContent='Deleted '+r.count+' leads.';setTimeout(()=>renderManageImports(container),1500);}
+        else{mDiv.className='alert alert-error';mDiv.textContent=r.error;d1.disabled=false;d1.textContent='Delete Unassigned ('+unassigned+')';}
+      }},'Delete Unassigned ('+unassigned+')');
+      btns.appendChild(d1);
     }
 
-    // Delete entire batch
-    const delAllBtn = el('button',{className:'btn btn-danger btn-xs',onClick:async()=>{
-      if(!confirm(`Delete ALL ${b.count} leads from ${b.date} (${b.source})? This includes assigned leads too! Cannot undo!`))return;
-      delAllBtn.disabled=true;delAllBtn.textContent='Deleting...';
-      const r = await api.delBody('/leads/bulk',{filter_source:b.source,filter_date:b.date});
-      if(r.ok){mDiv.className='alert alert-success';mDiv.textContent='✅ Deleted '+r.count+' leads from this batch.';setTimeout(()=>renderManageImports(container),1500);}
-      else{mDiv.className='alert alert-error';mDiv.textContent=r.error;delAllBtn.disabled=false;delAllBtn.textContent='Delete All';}
-    }},'🗑️ Delete Entire Batch');
-    actDiv.appendChild(delAllBtn);
+    const d2 = el('button',{className:'btn btn-danger btn-sm',onClick:async()=>{
+      if(!confirm('Delete ALL '+count+' leads from this batch including assigned? Cannot undo!')) return;
+      d2.disabled=true; d2.textContent='Deleting...';
+      const r = await api.delBody('/leads/bulk',{filter_source:source,filter_date:date});
+      if(r.ok){mDiv.className='alert alert-success';mDiv.textContent='Deleted '+r.count+' leads.';setTimeout(()=>renderManageImports(container),1500);}
+      else{mDiv.className='alert alert-error';mDiv.textContent=r.error;d2.disabled=false;d2.textContent='Delete Entire Batch';}
+    }},'Delete Entire Batch ('+count+')');
+    btns.appendChild(d2);
 
-    batchDiv.appendChild(actDiv);
-    bCard.appendChild(batchDiv);
+    row.appendChild(btns);
+    bCard.appendChild(row);
   });
 
   container.appendChild(bCard);
 }
+
 
 // ── STAFF LEADS MODAL ─────────────────────────────────────────────
 function openStaffLeadsModal(staff) {
