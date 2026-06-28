@@ -26,7 +26,7 @@ const User = sequelize.define('User', {
   daily_target: { type: DataTypes.INTEGER, defaultValue: 50 },
   email:        { type: DataTypes.STRING(150), allowNull: true },
   avatar_color: { type: DataTypes.STRING(20), defaultValue: '#6366f1' },
-}, { tableName: 'users', timestamps: true });
+}, { tableName: 'users', timestamps: true, indexes: [] });
 
 // ── LEADS ─────────────────────────────────────────────────────────
 const Lead = sequelize.define('Lead', {
@@ -48,7 +48,7 @@ const Lead = sequelize.define('Lead', {
   call_count:           { type: DataTypes.INTEGER, defaultValue: 0 },
   last_called_at:       { type: DataTypes.DATE, allowNull: true },
   extra:                { type: DataTypes.JSON },
-}, { tableName: 'leads', timestamps: true });
+}, { tableName: 'leads', timestamps: true, indexes: [] });
 
 // ── CLIENTS ───────────────────────────────────────────────────────
 const Client = sequelize.define('Client', {
@@ -80,7 +80,7 @@ const Client = sequelize.define('Client', {
   completed_at:     { type: DataTypes.DATE, allowNull: true },
   priority:         { type: DataTypes.ENUM('low','medium','high','vip'), defaultValue: 'medium' },
   tags:             { type: DataTypes.JSON, defaultValue: [] },
-}, { tableName: 'clients', timestamps: true });
+}, { tableName: 'clients', timestamps: true, indexes: [] });
 
 // ── CLIENT ACTIVITY ───────────────────────────────────────────────
 const ClientActivity = sequelize.define('ClientActivity', {
