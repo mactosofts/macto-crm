@@ -138,10 +138,38 @@ function icon(name) {
 }
 
 // ── BOOT ─────────────────────────────────────────────────────────
+// ── TOAST NOTIFICATIONS ──────────────────────────────────────────
+function showToast(message, type='success', duration=4000) {
+  const colors = {success:'#22c55e',error:'#ef4444',warning:'#f59e0b',info:'#6366f1'};
+  const color = colors[type]||colors.success;
+  const existing = document.querySelectorAll('.toast-notif');
+  const top = 70 + existing.length * 60;
+  const toast = document.createElement('div');
+  toast.className = 'toast-notif';
+  toast.style.cssText = `position:fixed;top:${top}px;right:16px;background:var(--bg3);border:1px solid ${color}44;border-left:4px solid ${color};border-radius:10px;padding:12px 18px;font-size:13px;font-weight:600;color:var(--text);z-index:9999;box-shadow:0 8px 32px rgba(0,0,0,0.4);max-width:320px;animation:slideIn 0.3s ease;`;
+  toast.textContent = message;
+  document.body.appendChild(toast);
+  setTimeout(()=>{toast.style.opacity='0';toast.style.transform='translateX(20px)';toast.style.transition='all 0.3s';setTimeout(()=>toast.remove(),300);}, duration);
+}
+
 async function boot() {
   const r = await api.get('/me');
   if (r.ok) STATE.user = r.user;
   render();
+  // Check for callback due alerts
+  if(r.ok && r.user.role === 'staff') {
+    setTimeout(async()=>{
+      const cb = await api.get('/leads/callbacks-due');
+      if(cb.ok && cb.count > 0) {
+        showToast('🔔 '+cb.count+' callback(s) due now!', 'warning');
+        if(Notification.permission === 'granted') {
+          new Notification('Macto CRM - Callbacks Due', { body: cb.count+' leads need a callback now', icon: '/favicon.ico' });
+        } else if(Notification.permission !== 'denied') {
+          Notification.requestPermission();
+        }
+      }
+    }, 2000);
+  }
 }
 
 function render() {
@@ -192,11 +220,12 @@ function renderApp() {
   const tabs = isAdmin ? [
     {s:'Overview'},{id:'dashboard',l:'🏠 Dashboard',i:'dash'},
     {s:'Leads'},{id:'assign_leads',l:'📋 Assign Leads',i:'assign'},{id:'all_leads',l:'All Leads',i:'assign'},{id:'import',l:'📤 Import',i:'upload'},{id:'manage_imports',l:'🗑️ Manage Imports',i:'trash'},
-    {s:'Sales'},{id:'dialer',l:'📞 Dialer',i:'phone'},{id:'pipeline',l:'📊 Pipeline',i:'pipeline'},{id:'clients',l:'👥 All Clients',i:'users'},
+    {s:'Sales'},{id:'dialer',l:'📞 Dialer',i:'phone'},{id:'pipeline',l:'📊 Pipeline',i:'pipeline'},{id:'kanban',l:'🗂️ Kanban',i:'pipeline'},{id:'clients',l:'👥 All Clients',i:'users'},
     {s:'Documents'},{id:'proposals',l:'📄 Proposals',i:'audit'},{id:'invoices',l:'🧾 Invoices',i:'money'},
     {s:'Work'},{id:'tasks',l:'✅ Tasks',i:'check'},
     {s:'Audits'},{id:'audits',l:'🔍 Audit Reports',i:'audit'},
     {s:'Insights'},{id:'analytics',l:'📈 Analytics',i:'chart'},{id:'revenue',l:'💰 Revenue',i:'money'},
+    {s:'Campaigns'},{id:'bulk_wa',l:'📢 Bulk WhatsApp',i:'phone'},{id:'wa_campaigns',l:'📊 WA Campaigns',i:'chart'},
     {s:'Settings'},{id:'team',l:'👥 Team',i:'users'},{id:'password',l:'🔐 Password',i:'check'},
   ] : isStaff ? [
     {s:'My Work'},{id:'staff_dash',l:'🏠 Dashboard',i:'dash'},{id:'dialer',l:'📞 Dialer',i:'phone'},
@@ -213,8 +242,46 @@ function renderApp() {
   const flatTabs = tabs.filter(t=>t.id);
   if (!flatTabs.find(t=>t.id===STATE.tab)) STATE.tab = flatTabs[0]?.id||'dashboard';
 
+  // Global Search
+  const searchWrap = el('div',{style:'position:relative;flex:1;max-width:320px;margin:0 12px'});
+  const searchInp = el('input',{type:'search',placeholder:'Search leads, clients, invoices...',style:'width:100%;background:var(--bg4);border:1px solid var(--border2);border-radius:8px;padding:8px 14px;color:var(--text);font-size:13px;outline:none;font-family:inherit;'});
+  const searchDrop = el('div',{style:'position:absolute;top:calc(100% + 4px);left:0;right:0;background:var(--bg3);border:1px solid var(--border2);border-radius:10px;z-index:999;max-height:320px;overflow-y:auto;box-shadow:0 8px 32px rgba(0,0,0,0.5);display:none'});
+  searchInp.addEventListener('focus',()=>{searchInp.style.borderColor='var(--accent)';searchInp.style.boxShadow='0 0 0 3px rgba(99,102,241,0.15)';});
+  searchInp.addEventListener('blur',()=>{searchInp.style.borderColor='var(--border2)';searchInp.style.boxShadow='';setTimeout(()=>{searchDrop.style.display='none';},200);});
+  let _st;
+  searchInp.addEventListener('input',()=>{
+    clearTimeout(_st);
+    const q=searchInp.value.trim();
+    if(q.length<2){searchDrop.style.display='none';return;}
+    _st=setTimeout(async()=>{
+      const r=await api.get('/search?q='+encodeURIComponent(q));
+      searchDrop.innerHTML='';
+      if(!r.ok||!r.results.length){searchDrop.appendChild(el('div',{style:'padding:16px;color:var(--muted);font-size:13px;text-align:center'},'No results found'));}
+      else {
+        const icons={lead:'📋',client:'👥',invoice:'🧾'};
+        r.results.forEach(res=>{
+          const item=el('div',{style:'padding:10px 16px;cursor:pointer;border-bottom:1px solid var(--border)'},
+            el('div',{style:'display:flex;align-items:center;gap:10px'},
+              el('span',{style:'font-size:15px'},icons[res.type]||'📄'),
+              el('div',{style:'flex:1'},el('div',{style:'font-size:13px;font-weight:600'},res.title),el('div',{style:'font-size:11px;color:var(--muted2)'},res.sub)),
+              el('span',{style:'font-size:10px;font-weight:700;text-transform:uppercase;color:var(--muted);background:var(--bg4);padding:2px 6px;border-radius:4px'},res.type)
+            )
+          );
+          item.addEventListener('mouseenter',()=>item.style.background='rgba(99,102,241,0.08)');
+          item.addEventListener('mouseleave',()=>item.style.background='');
+          item.addEventListener('click',()=>{STATE.tab=res.tab;render();searchDrop.style.display='none';searchInp.value='';});
+          searchDrop.appendChild(item);
+        });
+      }
+      searchDrop.style.display='block';
+    },300);
+  });
+  searchWrap.appendChild(searchInp);
+  searchWrap.appendChild(searchDrop);
+
   const topbar = el('div',{className:'topbar'},
-    el('div',{className:'brand'},el('div',{className:'brand-logo'},'🚀 Macto AI CRM'),el('span',{className:`role-pill ${user.role}`},user.role.toUpperCase())),
+    el('div',{className:'brand'},el('div',{className:'brand-logo'},'Macto AI CRM'),el('span',{className:`role-pill ${user.role}`},user.role.toUpperCase())),
+    isAdmin ? searchWrap : el('div',{}),
     el('div',{className:'topbar-right'},
       el('button',{id:'notif-bell',className:'btn btn-ghost btn-sm',style:'position:relative;font-size:16px'},'🔔'),
       el('span',{className:'topbar-user'},'Hi, '+user.name),
@@ -265,6 +332,7 @@ function renderApp() {
       else if (tab==='manage_imports') await renderManageImports(main);
       else if (tab==='dialer') await renderDialer(main);
       else if (tab==='pipeline') await renderPipeline(main);
+      else if (tab==='kanban') await renderKanban(main);
       else if (tab==='clients') await renderAllClients(main);
       else if (tab==='proposals') await renderProposals(main);
       else if (tab==='invoices') await renderInvoices(main);
@@ -273,6 +341,8 @@ function renderApp() {
       else if (tab==='analytics') await renderAnalytics(main);
       else if (tab==='revenue') await renderRevenue(main);
       else if (tab==='team') await renderTeam(main);
+      else if (tab==='bulk_wa') await renderBulkWA(main);
+      else if (tab==='wa_campaigns') await renderWACampaigns(main);
       else if (tab==='password') renderPassword(main);
     } else if (isStaff) {
       if (tab==='staff_dash') await renderStaffDash(main);
@@ -393,6 +463,60 @@ async function renderDashboard(container) {
   }
   container.appendChild(staffCard);
 
+  // Staff Leaderboard
+  if(r.staffStats && r.staffStats.length) {
+    const lbCard = el('div',{className:'card',style:'margin-bottom:16px'});
+    lbCard.appendChild(el('div',{style:'display:flex;justify-content:space-between;align-items:center;margin-bottom:14px'},
+      el('div',{className:'card-title',style:'margin:0'},'🏆 Staff Leaderboard'),
+      el('div',{style:'font-size:11px;color:var(--muted)'},'Ranked by performance score')
+    ));
+    const medals=['🥇','🥈','🥉'];
+    r.staffStats.slice(0,5).forEach((s,i)=>{
+      const cr=parseFloat(s.convRate||0);
+      const crColor=cr>=15?'#22c55e':cr>=8?'#f59e0b':'#ef4444';
+      lbCard.appendChild(el('div',{style:`display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--border);${i===0?'background:rgba(251,191,36,0.04);border-radius:8px;padding:10px 12px;':''}`},
+        el('div',{style:'font-size:20px;width:28px;text-align:center'},medals[i]||('#'+(i+1))),
+        el('div',{style:`width:36px;height:36px;border-radius:50%;background:${s.avatar_color||'#6366f1'}33;border:2px solid ${s.avatar_color||'#6366f1'};display:flex;align-items:center;justify-content:center;font-weight:800;color:${s.avatar_color||'#6366f1'};font-size:14px;flex-shrink:0`},s.name.charAt(0).toUpperCase()),
+        el('div',{style:'flex:1'},
+          el('div',{style:'font-weight:700;font-size:13px'},s.name),
+          el('div',{style:'font-size:11px;color:var(--muted2)'},s.monthCalls+' calls this month · '+s.interested+' interested')
+        ),
+        el('div',{style:'text-align:right'},
+          el('div',{style:`font-size:18px;font-weight:900;color:${crColor}`},s.convRate+'%'),
+          el('div',{style:'font-size:10px;color:var(--muted)'},'conv rate'),
+          el('div',{style:'font-size:12px;color:#4ade80;font-weight:600'},fmt(s.revenue))
+        )
+      ));
+    });
+    container.appendChild(lbCard);
+  }
+
+  // Hot Leads
+  if(r.hotLeads && r.hotLeads.length) {
+    const hlCard = el('div',{className:'card',style:'margin-bottom:16px'});
+    hlCard.appendChild(el('div',{style:'display:flex;justify-content:space-between;align-items:center;margin-bottom:12px'},
+      el('div',{className:'card-title',style:'margin:0'},'🔥 Hot Leads — Priority Callbacks'),
+      el('button',{className:'btn btn-ghost btn-sm',onClick:()=>{STATE.tab='all_leads';render();}},'View All →')
+    ));
+    r.hotLeads.forEach(l=>{
+      const score = l.lead_score||0;
+      const scoreColor = score>=70?'#22c55e':score>=50?'#f59e0b':'#fb923c';
+      hlCard.appendChild(el('div',{style:'display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid var(--border)'},
+        el('div',{style:`background:${scoreColor}22;color:${scoreColor};border-radius:8px;padding:4px 8px;font-weight:800;font-size:13px;min-width:40px;text-align:center`},score),
+        el('div',{style:'flex:1'},
+          el('div',{style:'font-weight:600;font-size:13px'},l.name||'Unknown'),
+          el('div',{style:'font-size:11px;color:var(--muted2)'},l.phone+' · '+catLabel(l.category))
+        ),
+        el('div',{style:'text-align:right'},
+          el('div',{style:`color:${scoreColor};font-size:11px;font-weight:700`},l.status.replace('_',' ').toUpperCase()),
+          l.callback_date?el('div',{style:'color:#fbbf24;font-size:11px'},'📅 '+l.callback_date):null,
+          el('div',{style:'font-size:11px;color:var(--muted)'},l.assignedStaff?.name||'Unassigned')
+        )
+      ));
+    });
+    container.appendChild(hlCard);
+  }
+
   // Pipeline Summary
   if (r.pipelineByStage && r.pipelineByStage.length) {
     container.appendChild(sectionLabel('📊 PIPELINE STATUS'));
@@ -450,6 +574,12 @@ async function renderDashboard(container) {
     });
     container.appendChild(aCard);
   }
+  // Auto-refresh every 60 seconds
+  if(STATE._dashRefresh) clearInterval(STATE._dashRefresh);
+  STATE._dashRefresh = setInterval(()=>{
+    if(STATE.tab==='dashboard') renderDashboard(container);
+    else clearInterval(STATE._dashRefresh);
+  }, 60000);
 }
 
 // ── STAFF DASHBOARD ──────────────────────────────────────────────
@@ -622,7 +752,10 @@ async function renderAllLeads(container) {
   const usersR = await api.get('/users');
   const users = usersR.ok ? usersR.data : [];
   container.innerHTML = '';
-  container.appendChild(el('div',{className:'page-title'},'📋 All Leads'));
+  container.appendChild(el('div',{style:'display:flex;justify-content:space-between;align-items:center;margin-bottom:20px'},
+    el('div',{className:'page-title',style:'margin:0'},'📋 All Leads'),
+    el('button',{className:'btn btn-ghost btn-sm',onClick:()=>{window.location.href='/api/export/leads';},'📥 Export Excel')
+  ));
 
   let page=1, filters={search:'',status:'all',category:'all',source:'all',assigned:'all'};
   const selectedIds = new Set();
@@ -1123,9 +1256,27 @@ function renderNewAudit(container) {
 }
 
 // ── ANALYTICS ─────────────────────────────────────────────────────
-async function renderAnalytics(container) {
+async function renderAnalytics(container, fromDate='', toDate='') {
   container.innerHTML = loading();
-  const r = await api.get('/analytics/full');
+  // Date range filter header
+  const dateRow = el('div',{style:'display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;flex-wrap:wrap;gap:10px'});
+  dateRow.appendChild(el('div',{className:'page-title',style:'margin:0'},'Analytics'));
+  const fromInp = el('input',{type:'date',className:'inp inp-sm',value:fromDate,style:'width:150px'});
+  const toInp = el('input',{type:'date',className:'inp inp-sm',value:toDate,style:'width:150px'});
+  const filterBtn = el('button',{className:'btn btn-primary btn-sm',onClick:()=>renderAnalytics(container,fromInp.value,toInp.value)},'Apply Filter');
+  const clearBtn = el('button',{className:'btn btn-ghost btn-sm',onClick:()=>renderAnalytics(container,'','')},'Clear');
+  dateRow.appendChild(el('div',{style:'display:flex;gap:8px;align-items:center'},
+    el('span',{style:'color:var(--muted);font-size:12px'},'From'),fromInp,
+    el('span',{style:'color:var(--muted);font-size:12px'},'To'),toInp,
+    filterBtn,clearBtn
+  ));
+  container.innerHTML = '';
+  container.appendChild(dateRow);
+
+  const params = new URLSearchParams();
+  if(fromDate) params.set('from',fromDate);
+  if(toDate) params.set('to',toDate);
+  const r = await api.get('/analytics/full'+(params.toString()?'?'+params:''));
   container.innerHTML = '';
   container.appendChild(el('div',{className:'page-title'},'📈 Analytics'));
   if(!r.ok){container.appendChild(alertEl('error','Failed to load analytics'));return;}
@@ -1224,7 +1375,10 @@ async function renderRevenue(container) {
   container.innerHTML = loading();
   const invR = await api.get('/invoices');
   container.innerHTML = '';
-  container.appendChild(el('div',{className:'page-title'},'💰 Revenue'));
+  container.appendChild(el('div',{style:'display:flex;justify-content:space-between;align-items:center;margin-bottom:20px'},
+    el('div',{className:'page-title',style:'margin:0'},'💰 Revenue'),
+    el('button',{className:'btn btn-ghost btn-sm',onClick:()=>{window.location.href='/api/export/revenue';}},'📥 Export Excel')
+  ));
   const invoices = invR.ok ? invR.data : [];
   const paid = invoices.filter(i=>i.status==='paid');
   const pending = invoices.filter(i=>i.status==='sent');
@@ -1829,7 +1983,10 @@ async function renderAllClients(container) {
   const clients = clientsR.ok ? clientsR.data : [];
   const users = usersR.ok ? usersR.data : [];
   container.innerHTML = '';
-  container.appendChild(el('div',{className:'page-title'},'👥 All Clients'));
+  container.appendChild(el('div',{style:'display:flex;justify-content:space-between;align-items:center;margin-bottom:20px'},
+    el('div',{className:'page-title',style:'margin:0'},'👥 All Clients'),
+    el('button',{className:'btn btn-ghost btn-sm',onClick:()=>{window.location.href='/api/export/clients';}},'📥 Export Excel')
+  ));
   const addBtn=el('button',{className:'btn btn-primary',style:'margin-bottom:14px',onClick:()=>openAddClientModal(users,()=>renderAllClients(container))},'+  Add Client Manually');
   container.appendChild(addBtn);
   const searchInp=el('input',{type:'search',className:'inp inp-sm',placeholder:'Search…',style:'flex:1;min-width:180px'});
@@ -2468,4 +2625,171 @@ function drawLineChart(canvas, labels, datasets) {
     ctx.fillStyle='#5a6785';ctx.font='10px sans-serif';ctx.textAlign='center';
     ctx.fillText(l,x,H-pad.bottom+14);
   });
+}
+
+// ── BULK WHATSAPP ─────────────────────────────────────────────────
+async function renderBulkWA(container) {
+  container.innerHTML = loading();
+  const usersR = await api.get('/users');
+  container.innerHTML = '';
+  container.appendChild(el('div',{style:'display:flex;justify-content:space-between;align-items:center;margin-bottom:20px'},
+    el('div',{className:'page-title',style:'margin:0'},'📢 Bulk WhatsApp Campaign'),
+    el('button',{className:'btn btn-ghost btn-sm',onClick:()=>{STATE.tab='wa_campaigns';render();}},'View All Campaigns →')
+  ));
+  container.appendChild(el('div',{className:'alert alert-info',style:'margin-bottom:16px'},'⚙️ Requires WHATSAPP_TOKEN & WHATSAPP_PHONE_ID in Railway Variables. Each message costs WhatsApp API credits.'));
+
+  const mDiv = el('div',{});
+  container.appendChild(mDiv);
+
+  const nameInp = el('input',{type:'text',className:'inp',placeholder:'Campaign name e.g. "June Follow-up Blast"'});
+  const msgInp = el('textarea',{className:'inp',rows:5,placeholder:'Message text. Use {name} to personalize e.g. "Hi {name}, following up on our call..."'});
+  const statusSel = el('select',{className:'inp inp-sm'});
+  [['all','All Status'],['pending','Pending'],['called','Called'],['callback','Callback Due'],['not_interested','Not Interested']].forEach(([v,l])=>statusSel.appendChild(el('option',{value:v},l)));
+  const catSel = el('select',{className:'inp inp-sm'});
+  [['all','All Categories'],...CATEGORIES.map(c=>[c.value,c.label])].forEach(([v,l])=>catSel.appendChild(el('option',{value:v},l)));
+  const srcSel = el('select',{className:'inp inp-sm'});
+  [['all','All Sources'],['cold_call','Cold Call'],['ads','Ads'],['import','Import'],['referral','Referral']].forEach(([v,l])=>srcSel.appendChild(el('option',{value:v},l)));
+
+  const previewDiv = el('div',{style:'margin:12px 0;padding:12px 16px;background:var(--bg4);border-radius:8px;font-size:13px;color:var(--muted2)'},'Click Preview to see how many leads will receive this message.');
+  const previewBtn = el('button',{className:'btn btn-ghost',onClick:async()=>{
+    previewBtn.textContent='Loading...';previewBtn.disabled=true;
+    const r = await api.post('/wa-campaigns/preview',{filter_status:statusSel.value,filter_category:catSel.value,filter_source:srcSel.value});
+    previewBtn.textContent='Preview';previewBtn.disabled=false;
+    if(r.ok){
+      previewDiv.innerHTML='';
+      previewDiv.appendChild(el('div',{style:'font-weight:700;color:var(--green);font-size:15px;margin-bottom:8px'},'✅ '+r.count+' leads will receive this message'));
+      if(r.sample.length){
+        previewDiv.appendChild(el('div',{style:'font-size:11px;color:var(--muted);margin-bottom:6px'},'Sample recipients:'));
+        r.sample.forEach(s=>previewDiv.appendChild(el('div',{style:'font-size:12px;color:var(--muted2)'},'• '+s.name+' ('+s.phone+')')));
+      }
+    }
+  }},'👁️ Preview');
+
+  const sendBtn = el('button',{className:'btn btn-success',style:'width:100%;justify-content:center;margin-top:4px',onClick:async()=>{
+    if(!nameInp.value){mDiv.className='alert alert-error';mDiv.textContent='Campaign name required.';return;}
+    if(!msgInp.value||msgInp.value.length<10){mDiv.className='alert alert-error';mDiv.textContent='Message too short.';return;}
+    if(!confirm('Send WhatsApp to all filtered leads? This cannot be undone.'))return;
+    sendBtn.disabled=true;sendBtn.textContent='Creating campaign...';
+    const r = await api.post('/wa-campaigns',{name:nameInp.value,message:msgInp.value,filter_status:statusSel.value,filter_category:catSel.value,filter_source:srcSel.value});
+    if(!r.ok){mDiv.className='alert alert-error';mDiv.textContent=r.error;sendBtn.disabled=false;sendBtn.textContent='Send Campaign';return;}
+    sendBtn.textContent='Sending to '+r.total+' leads...';
+    const r2 = await api.post('/wa-campaigns/'+r.data.id+'/send',{});
+    sendBtn.disabled=false;sendBtn.textContent='Send Campaign';
+    if(r2.ok){mDiv.className='alert alert-success';mDiv.textContent='✅ Sent: '+r2.sent+' | Failed: '+r2.failed+' | Total: '+r2.total;}
+    else{mDiv.className='alert alert-error';mDiv.textContent=r2.error;}
+  }},'📤 Send Campaign');
+
+  container.appendChild(el('div',{className:'card'},
+    el('div',{className:'card-title'},'Campaign Details'),
+    el('div',{className:'field'},el('label',{},'Campaign Name'),nameInp),
+    el('div',{className:'field'},el('label',{},'Message'),msgInp),
+    el('div',{style:'background:var(--bg4);border-radius:8px;padding:12px;margin-bottom:14px'},
+      el('div',{style:'font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;margin-bottom:10px'},'Filter Recipients'),
+      el('div',{style:'display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px'},
+        el('div',{className:'field',style:'margin:0'},el('label',{},'Status'),statusSel),
+        el('div',{className:'field',style:'margin:0'},el('label',{},'Category'),catSel),
+        el('div',{className:'field',style:'margin:0'},el('label',{},'Source'),srcSel)
+      )
+    ),
+    el('div',{style:'display:flex;gap:8px;margin-bottom:12px'},previewBtn),
+    previewDiv,
+    sendBtn
+  ));
+}
+
+async function renderWACampaigns(container) {
+  container.innerHTML = loading();
+  const r = await api.get('/wa-campaigns');
+  container.innerHTML = '';
+  container.appendChild(el('div',{style:'display:flex;justify-content:space-between;align-items:center;margin-bottom:20px'},
+    el('div',{className:'page-title',style:'margin:0'},'📊 WA Campaign History'),
+    el('button',{className:'btn btn-primary btn-sm',onClick:()=>{STATE.tab='bulk_wa';render();}},'+ New Campaign')
+  ));
+  const campaigns = r.ok ? r.data : [];
+  if(!campaigns.length){
+    container.appendChild(el('div',{className:'card'},el('div',{style:'text-align:center;padding:40px;color:var(--muted)'},'No campaigns yet. Create your first bulk WhatsApp campaign.')));
+    return;
+  }
+  const sColors={draft:'#94a3b8',running:'#f59e0b',completed:'#22c55e',failed:'#ef4444'};
+  const tw = el('div',{className:'table-wrap'},el('table',{},
+    el('thead',{},el('tr',{},...['Campaign','Filters','Total','Sent','Failed','Status','Created','By'].map(h=>el('th',{},h)))),
+    el('tbody',{},...campaigns.map(c=>{
+      const sc=sColors[c.status]||'#94a3b8';
+      const pct = c.total_count>0?Math.round((c.sent_count/c.total_count)*100):0;
+      return el('tr',{},
+        el('td',{style:'font-weight:600'},c.name),
+        el('td',{style:'font-size:11px;color:var(--muted2)'},[c.filter_status,c.filter_category,c.filter_source].filter(Boolean).join(' · ')||'All leads'),
+        el('td',{style:'color:var(--muted2)'},c.total_count),
+        el('td',{style:'color:#22c55e;font-weight:700'},c.sent_count),
+        el('td',{style:'color:#ef4444'},c.failed_count),
+        el('td',{},
+          el('div',{},el('span',{style:`background:${sc}22;color:${sc};padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600`},c.status)),
+          c.status==='completed'?el('div',{style:'font-size:10px;color:var(--muted);margin-top:2px'},pct+'% success rate'):null
+        ),
+        el('td',{className:'td-muted'},fmtDay(c.createdAt)),
+        el('td',{className:'td-muted'},c.createdBy?c.createdBy.name:'—')
+      );
+    }))
+  ));
+  container.appendChild(tw);
+}
+
+// ── KANBAN PIPELINE ───────────────────────────────────────────────
+async function renderKanban(container) {
+  container.innerHTML = loading();
+  const [clientsR, usersR] = await Promise.all([api.get('/clients?limit=500'), api.get('/users')]);
+  const clients = clientsR.ok ? clientsR.data : [];
+  const users = usersR.ok ? usersR.data : [];
+  container.innerHTML = '';
+  container.appendChild(el('div',{style:'display:flex;justify-content:space-between;align-items:center;margin-bottom:16px'},
+    el('div',{className:'page-title',style:'margin:0'},'📊 Kanban Pipeline'),
+    el('button',{className:'btn btn-ghost btn-sm',onClick:()=>renderKanban(container)},'🔄 Refresh')
+  ));
+
+  const KANBAN_STAGES = [
+    {value:'interested',label:'Interested',color:'#60a5fa'},
+    {value:'follow_up_1',label:'Follow-up 1',color:'#fbbf24'},
+    {value:'meeting_scheduled',label:'Meeting',color:'#a78bfa'},
+    {value:'proposal_shared',label:'Proposal',color:'#06b6d4'},
+    {value:'negotiation',label:'Negotiation',color:'#fb923c'},
+    {value:'invoice_shared',label:'Invoice',color:'#fb923c'},
+    {value:'converted',label:'Converted',color:'#22c55e'},
+    {value:'in_progress',label:'In Progress',color:'#4ade80'},
+    {value:'lost',label:'Lost',color:'#ef4444'},
+  ];
+
+  const byStage = {};
+  KANBAN_STAGES.forEach(s=>{byStage[s.value]=[];});
+  clients.forEach(c=>{
+    const key = KANBAN_STAGES.find(s=>s.value===c.pipeline_stage)?.value || 'interested';
+    if(byStage[key]) byStage[key].push(c);
+  });
+
+  const board = el('div',{className:'kanban-board'});
+  KANBAN_STAGES.forEach(stage=>{
+    const cols = byStage[stage.value]||[];
+    const col = el('div',{className:'kanban-col'});
+    col.appendChild(el('div',{className:'kanban-col-header',style:`border-bottom-color:${stage.color}44`},
+      el('span',{style:`color:${stage.color};font-weight:700`},stage.label),
+      el('span',{style:`background:${stage.color}22;color:${stage.color};padding:2px 8px;border-radius:999px;font-size:11px`},cols.length)
+    ));
+    if(!cols.length){
+      col.appendChild(el('div',{style:'text-align:center;padding:20px;color:var(--muted);font-size:12px'},'Empty'));
+    }
+    cols.forEach(c=>{
+      const staff = users.find(u=>u.id===c.assigned_to);
+      const card = el('div',{className:'kanban-card',onClick:()=>openClientModal(c,users,()=>renderKanban(container))},
+        el('div',{style:'font-weight:700;font-size:13px;margin-bottom:4px'},c.name),
+        c.company?el('div',{style:'font-size:11px;color:var(--muted2);margin-bottom:4px'},c.company):null,
+        el('div',{style:'display:flex;justify-content:space-between;align-items:center;margin-top:6px'},
+          el('div',{style:'font-size:12px;color:#4ade80;font-weight:600'},c.project_value>0?fmt(c.project_value):'No value'),
+          staff?el('div',{style:`background:${staff.avatar_color||'#6366f1'}33;color:${staff.avatar_color||'#6366f1'};border-radius:999px;padding:2px 8px;font-size:10px;font-weight:700`},staff.name.split(' ')[0]):null
+        ),
+        c.next_followup?el('div',{style:'font-size:10px;color:#fbbf24;margin-top:4px'},'📅 '+fmtDay(c.next_followup)):null
+      );
+      col.appendChild(card);
+    });
+    board.appendChild(col);
+  });
+  container.appendChild(el('div',{style:'overflow-x:auto'},board));
 }
