@@ -927,73 +927,142 @@ async function renderAllLeads(container) {
 // ── MANAGE IMPORTS ───────────────────────────────────────────────
 async function renderManageImports(container) {
   container.innerHTML = loading();
-  const batchR = await api.get('/leads/batches');
+  const [batchR, leadsR] = await Promise.all([api.get('/leads/batches'), api.get('/leads?limit=1')]);
   container.innerHTML = '';
-  container.appendChild(el('div',{className:'page-title'},'🗑️ Manage Imported Leads'));
-  container.appendChild(el('div',{className:'alert alert-warn',style:'margin-bottom:16px'},'⚠️ Warning: Deleting leads is PERMANENT and cannot be undone.'));
+
+  container.appendChild(el('div',{style:'display:flex;justify-content:space-between;align-items:center;margin-bottom:20px'},
+    el('div',{className:'page-title',style:'margin:0'},'🗑️ Manage Imports'),
+    el('button',{className:'btn btn-primary btn-sm',onClick:()=>{STATE.tab='import';render();}},'+ New Import')
+  ));
+
+  container.appendChild(el('div',{className:'alert alert-warn',style:'margin-bottom:16px'},'⚠️ Warning: Deleting leads is PERMANENT and cannot be undone. Assigned leads will also be deleted.'));
 
   const mDiv = el('div',{});
   container.appendChild(mDiv);
 
-  // Quick delete options
-  const qCard = el('div',{className:'card',style:'margin-bottom:16px'},el('div',{className:'card-title'},'⚡ Quick Delete Options'));
-  
+  const batches = batchR.ok ? batchR.data : [];
+  const totalLeads = leadsR.total || 0;
+
+  // Summary cards
+  const sumGrid = el('div',{style:'display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:12px;margin-bottom:20px'});
+  [
+    {l:'Total Batches',v:batches.length,c:'#6366f1'},
+    {l:'Total Leads',v:totalLeads,c:'#3b82f6'},
+    {l:'Import Sources',v:[...new Set(batches.map(b=>b.source))].length,c:'#06b6d4'},
+  ].forEach(k=>{
+    sumGrid.appendChild(el('div',{style:`background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px;border-top:3px solid ${k.c}`},
+      el('div',{style:`font-size:26px;font-weight:900;color:${k.c}`},String(k.v)),
+      el('div',{style:'font-size:11px;color:var(--muted2);margin-top:6px;font-weight:600;text-transform:uppercase'},k.l)
+    ));
+  });
+  container.appendChild(sumGrid);
+
+  // Quick actions card
+  const qCard = el('div',{className:'card',style:'margin-bottom:16px'});
+  qCard.appendChild(el('div',{className:'card-title'},'⚡ Quick Actions'));
+  const qRow = el('div',{style:'display:flex;gap:12px;flex-wrap:wrap'});
+
   // Delete all unassigned
   const delUBtn = el('button',{className:'btn btn-danger',onClick:async()=>{
     const r2 = await api.get('/leads?assigned=unassigned&limit=1');
     const count = r2.total||0;
-    if (!count){mDiv.className='alert alert-info';mDiv.textContent='No unassigned leads.';return;}
-    if (!confirm(`Delete ALL ${count} unassigned leads? Cannot undo!`)) return;
-    delUBtn.disabled=true;delUBtn.textContent='Deleting…';
+    if(!count){mDiv.className='alert alert-info';mDiv.textContent='No unassigned leads found.';return;}
+    if(!confirm(`Permanently delete ALL ${count} unassigned leads? This cannot be undone!`))return;
+    delUBtn.disabled=true;delUBtn.textContent='Deleting...';
     const r = await api.delBody('/leads/bulk',{filter_assigned:'unassigned'});
     delUBtn.disabled=false;delUBtn.textContent='🗑️ Delete All Unassigned';
-    if (r.ok){mDiv.className='alert alert-success';mDiv.textContent='✓ Deleted '+r.count+' unassigned leads.';setTimeout(()=>renderManageImports(container),1500);}
+    if(r.ok){mDiv.className='alert alert-success';mDiv.textContent='✅ Deleted '+r.count+' unassigned leads.';setTimeout(()=>renderManageImports(container),1500);}
     else{mDiv.className='alert alert-error';mDiv.textContent=r.error;}
-  }},'🗑️ Delete All Unassigned Leads');
+  }},'🗑️ Delete All Unassigned');
 
-  qCard.appendChild(el('div',{style:'display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap'},
-    el('div',{},
-      el('div',{style:'font-size:13px;font-weight:600;margin-bottom:4px'},'Remove Unassigned Leads'),
-      el('div',{style:'color:var(--muted);font-size:12px;margin-bottom:8px'},'Delete all leads not yet assigned to any staff member'),
-      delUBtn
-    )
+  qRow.appendChild(el('div',{},
+    el('div',{style:'font-size:12px;font-weight:600;margin-bottom:4px'},'Remove Unassigned Leads'),
+    el('div',{style:'color:var(--muted);font-size:11px;margin-bottom:8px'},'Delete all leads not yet assigned to any staff'),
+    delUBtn
   ));
+  qCard.appendChild(qRow);
   container.appendChild(qCard);
 
-  // Batch table
-  const batches = batchR.ok ? batchR.data : [];
-  if (!batches.length) {
-    container.appendChild(el('div',{className:'card'},el('p',{style:'text-align:center;color:var(--muted);padding:30px'},'No import batches found.')));
+  // Batch list - each batch individually
+  if(!batches.length) {
+    container.appendChild(el('div',{className:'card'},
+      el('div',{style:'text-align:center;padding:40px'},
+        el('div',{style:'font-size:40px;margin-bottom:12px'},'📭'),
+        el('div',{style:'color:var(--muted);font-size:14px;margin-bottom:12px'},'No import batches found.'),
+        el('button',{className:'btn btn-primary',onClick:()=>{STATE.tab='import';render();}},'+ Import Leads')
+      )
+    ));
     return;
   }
 
-  const bCard = el('div',{className:'card'},el('div',{className:'card-title'},'📅 Delete by Import Batch'));
-  bCard.appendChild(el('p',{style:'color:var(--muted);font-size:12px;margin-bottom:12px'},'Each row = leads imported on that date from that source. Click Delete to remove the entire batch.'));
+  const bCard = el('div',{className:'card'});
+  bCard.appendChild(el('div',{style:'display:flex;justify-content:space-between;align-items:center;margin-bottom:14px'},
+    el('div',{className:'card-title',style:'margin:0'},'📦 Import Batches ('+batches.length+' batches)'),
+    el('div',{style:'font-size:12px;color:var(--muted)'},'Select individual batches to delete or view')
+  ));
 
-  const tw = el('div',{className:'table-wrap'},
-    el('table',{},
-      el('thead',{},el('tr',{},...['Date','Source','Total','Unassigned','Action'].map(h=>el('th',{},h)))),
-      el('tbody',{},...batches.map(b=>{
-        const srcColors={cold_call:'#3b82f6',ads:'#f59e0b',import:'#8b5cf6',referral:'#22c55e',audit:'#06b6d4',manual:'#94a3b8'};
-        const sc = srcColors[b.source]||'#94a3b8';
-        const dBtn = el('button',{className:'btn btn-danger btn-sm',onClick:async()=>{
-          if (!confirm(`Delete ${b.count} leads from ${b.date} (${b.source})? Cannot undo!`)) return;
-          dBtn.disabled=true;dBtn.textContent='Deleting…';
-          const r = await api.delBody('/leads/bulk',{filter_source:b.source,filter_date:b.date});
-          if (r.ok){mDiv.className='alert alert-success';mDiv.textContent='✓ Deleted '+r.count+' leads from '+b.date;setTimeout(()=>renderManageImports(container),1500);}
-          else{mDiv.className='alert alert-error';mDiv.textContent=r.error;dBtn.disabled=false;dBtn.textContent='Delete';}
-        }},'🗑️ Delete');
-        return el('tr',{},
-          el('td',{style:'font-weight:600'},b.date),
-          el('td',{},el('span',{style:`background:${sc}22;color:${sc};padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600`},b.source)),
-          el('td',{style:'font-weight:700;color:var(--text)'},b.count),
-          el('td',{style:'color:#ef4444;font-weight:600'},b.unassigned||0),
-          el('td',{},dBtn)
-        );
-      }))
-    )
-  );
-  bCard.appendChild(tw);
+  const srcColors={cold_call:'#3b82f6',ads:'#f59e0b',import:'#8b5cf6',referral:'#22c55e',audit:'#06b6d4',manual:'#94a3b8'};
+
+  // Show each batch as a card with options
+  batches.forEach(b=>{
+    const sc = srcColors[b.source]||'#94a3b8';
+    const assignedCount = parseInt(b.count) - parseInt(b.unassigned||0);
+    const batchDiv = el('div',{style:'display:flex;align-items:center;gap:12px;padding:14px;background:var(--bg4);border-radius:10px;margin-bottom:10px;border:1px solid var(--border)'});
+    
+    // Source badge
+    batchDiv.appendChild(el('div',{style:`background:${sc}22;color:${sc};border:1px solid ${sc}44;border-radius:8px;padding:8px 12px;font-size:12px;font-weight:700;text-align:center;min-width:80px;flex-shrink:0`},
+      el('div',{},b.source.replace('_',' ').toUpperCase()),
+      el('div',{style:'font-size:10px;margin-top:2px;opacity:0.8'},b.date)
+    ));
+
+    // Stats
+    batchDiv.appendChild(el('div',{style:'flex:1'},
+      el('div',{style:'display:flex;gap:16px;flex-wrap:wrap;margin-bottom:6px'},
+        el('div',{},el('div',{style:'font-size:18px;font-weight:800;color:var(--text)'},b.count),el('div',{style:'font-size:10px;color:var(--muted);text-transform:uppercase'},'Total')),
+        el('div',{},el('div',{style:'font-size:18px;font-weight:800;color:#22c55e'},assignedCount),el('div',{style:'font-size:10px;color:var(--muted);text-transform:uppercase'},'Assigned')),
+        el('div',{},el('div',{style:'font-size:18px;font-weight:800;color:#ef4444'},b.unassigned||0),el('div',{style:'font-size:10px;color:var(--muted);text-transform:uppercase'},'Unassigned')),
+      ),
+      // Progress bar
+      el('div',{style:'background:var(--bg);border-radius:999px;height:5px;overflow:hidden;max-width:200px'},
+        el('div',{style:`width:${b.count>0?Math.round((assignedCount/b.count)*100):0}%;background:#22c55e;height:100%;border-radius:999px`})
+      )
+    ));
+
+    // Action buttons
+    const actDiv = el('div',{style:'display:flex;flex-direction:column;gap:6px;flex-shrink:0'});
+    
+    // View leads button
+    actDiv.appendChild(el('button',{className:'btn btn-ghost btn-sm',onClick:()=>{
+      STATE.tab='all_leads';
+      render();
+    }},'👁️ View Leads'));
+
+    // Delete only unassigned from this batch
+    if(parseInt(b.unassigned||0)>0) {
+      const delUnassBtn = el('button',{className:'btn btn-danger btn-xs',onClick:async()=>{
+        if(!confirm(`Delete ${b.unassigned} UNASSIGNED leads from ${b.date} (${b.source})? Cannot undo!`))return;
+        delUnassBtn.disabled=true;delUnassBtn.textContent='Deleting...';
+        const r = await api.delBody('/leads/bulk',{filter_source:b.source,filter_date:b.date,filter_assigned:'unassigned'});
+        if(r.ok){mDiv.className='alert alert-success';mDiv.textContent='✅ Deleted '+r.count+' unassigned leads from this batch.';setTimeout(()=>renderManageImports(container),1500);}
+        else{mDiv.className='alert alert-error';mDiv.textContent=r.error;delUnassBtn.disabled=false;delUnassBtn.textContent='Delete Unassigned';}
+      }},'🗑️ Delete Unassigned ('+b.unassigned+')');
+      actDiv.appendChild(delUnassBtn);
+    }
+
+    // Delete entire batch
+    const delAllBtn = el('button',{className:'btn btn-danger btn-xs',onClick:async()=>{
+      if(!confirm(`Delete ALL ${b.count} leads from ${b.date} (${b.source})? This includes assigned leads too! Cannot undo!`))return;
+      delAllBtn.disabled=true;delAllBtn.textContent='Deleting...';
+      const r = await api.delBody('/leads/bulk',{filter_source:b.source,filter_date:b.date});
+      if(r.ok){mDiv.className='alert alert-success';mDiv.textContent='✅ Deleted '+r.count+' leads from this batch.';setTimeout(()=>renderManageImports(container),1500);}
+      else{mDiv.className='alert alert-error';mDiv.textContent=r.error;delAllBtn.disabled=false;delAllBtn.textContent='Delete All';}
+    }},'🗑️ Delete Entire Batch');
+    actDiv.appendChild(delAllBtn);
+
+    batchDiv.appendChild(actDiv);
+    bCard.appendChild(batchDiv);
+  });
+
   container.appendChild(bCard);
 }
 
