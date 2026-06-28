@@ -927,7 +927,9 @@ async function renderAllLeads(container) {
 // ── MANAGE IMPORTS ───────────────────────────────────────────────
 async function renderManageImports(container) {
   container.innerHTML = loading();
-  const batchR = await api.get('/leads/batches');
+  const r = await api.get('/leads?limit=200&source=import');
+  const r2 = await api.get('/leads?limit=200&source=cold_call');
+  const r3 = await api.get('/leads?limit=200&source=ads');
   container.innerHTML = '';
 
   container.appendChild(el('div',{style:'display:flex;justify-content:space-between;align-items:center;margin-bottom:20px'},
@@ -935,107 +937,114 @@ async function renderManageImports(container) {
     el('button',{className:'btn btn-primary btn-sm',onClick:()=>{STATE.tab='import';render();}},'+ New Import')
   ));
 
-  container.appendChild(el('div',{className:'alert alert-warn',style:'margin-bottom:16px'},'Warning: Deleting leads is PERMANENT and cannot be undone.'));
-
   const mDiv = el('div',{style:'margin-bottom:12px'});
   container.appendChild(mDiv);
 
-  // Show API response for debugging
-  if(!batchR.ok) {
-    container.appendChild(alertEl('error', 'API Error: '+(batchR.error||'Unknown')+' — Status: '+(batchR.ok)));
-    container.appendChild(el('div',{className:'card',style:'margin-top:12px'},
-      el('div',{style:'font-size:12px;color:var(--muted);font-family:monospace'},JSON.stringify(batchR).slice(0,500))
+  // Combine all leads
+  const allLeads = [
+    ...(r.ok?r.data:[]),
+    ...(r2.ok?r2.data:[]),
+    ...(r3.ok?r3.data:[]),
+  ];
+
+  const totalCount = (r.ok?r.total:0)+(r2.ok?r2.total:0)+(r3.ok?r3.total:0);
+
+  // Stats
+  const grid = el('div',{style:'display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:20px'});
+  [{l:'Import',v:r.ok?r.total:0,c:'#8b5cf6'},{l:'Cold Call',v:r2.ok?r2.total:0,c:'#3b82f6'},{l:'Ads',v:r3.ok?r3.total:0,c:'#f59e0b'}].forEach(k=>{
+    grid.appendChild(el('div',{style:`background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px;border-top:3px solid ${k.c};cursor:pointer`},
+      el('div',{style:`font-size:24px;font-weight:900;color:${k.c}`},String(k.v)),
+      el('div',{style:'font-size:11px;color:var(--muted2);text-transform:uppercase;margin-top:6px'},k.l+' Source')
     ));
-    return;
-  }
+  });
+  container.appendChild(grid);
 
-  const batches = Array.isArray(batchR.data) ? batchR.data : [];
-  
-  // Debug: show count
-  container.appendChild(el('div',{style:'color:var(--muted);font-size:12px;margin-bottom:8px'},'API returned '+batches.length+' batches'));
-
-  // Delete all unassigned button
+  // Quick delete buttons
   const qCard = el('div',{className:'card',style:'margin-bottom:16px'});
-  qCard.appendChild(el('div',{className:'card-title'},'Quick Actions'));
-  const delUBtn = el('button',{className:'btn btn-danger',onClick:async()=>{
-    if(!confirm('Delete ALL unassigned leads? Cannot undo!')) return;
-    delUBtn.disabled=true; delUBtn.textContent='Deleting...';
-    const r = await api.delBody('/leads/bulk',{filter_assigned:'unassigned'});
-    delUBtn.disabled=false; delUBtn.textContent='Delete All Unassigned';
-    if(r.ok){mDiv.className='alert alert-success';mDiv.textContent='Deleted '+r.count+' unassigned leads.';setTimeout(()=>renderManageImports(container),1500);}
-    else{mDiv.className='alert alert-error';mDiv.textContent=r.error;}
-  }},'Delete All Unassigned Leads');
-  qCard.appendChild(delUBtn);
+  qCard.appendChild(el('div',{className:'card-title'},'Quick Delete'));
+  const btnRow = el('div',{style:'display:flex;gap:10px;flex-wrap:wrap'});
+
+  const makeDelBtn = (label, filter, color) => {
+    const btn = el('button',{className:'btn btn-sm',style:`background:${color}22;color:${color};border:1px solid ${color}44`,onClick:async()=>{
+      if(!confirm('Delete ALL '+label+' leads? Cannot undo!')) return;
+      btn.disabled=true; btn.textContent='Deleting...';
+      const res = await api.delBody('/leads/bulk', filter);
+      btn.disabled=false; btn.textContent=label;
+      if(res.ok){mDiv.className='alert alert-success';mDiv.textContent='Deleted '+res.count+' leads.';setTimeout(()=>renderManageImports(container),1500);}
+      else{mDiv.className='alert alert-error';mDiv.textContent=res.error||'Delete failed';}
+    }},label);
+    return btn;
+  };
+
+  btnRow.appendChild(makeDelBtn('Delete All Unassigned',{filter_assigned:'unassigned'},'#ef4444'));
+  btnRow.appendChild(makeDelBtn('Delete All Import Source',{filter_source:'import'},'#8b5cf6'));
+  btnRow.appendChild(makeDelBtn('Delete All Ads Source',{filter_source:'ads'},'#f59e0b'));
+  btnRow.appendChild(makeDelBtn('Delete All Cold Call Source',{filter_source:'cold_call'},'#3b82f6'));
+  qCard.appendChild(btnRow);
   container.appendChild(qCard);
 
-  // Batch cards
-  if(!batches.length) {
-    container.appendChild(el('div',{className:'card'},
-      el('div',{style:'text-align:center;padding:40px;color:var(--muted)'},'No import batches found. Import leads first.')
-    ));
+  // Leads table with checkboxes
+  if(!allLeads.length){
+    container.appendChild(el('div',{className:'card'},el('div',{style:'text-align:center;padding:40px;color:var(--muted)'},'No leads found.')));
     return;
   }
 
-  const bCard = el('div',{className:'card'});
-  bCard.appendChild(el('div',{className:'card-title'},'Import Batches ('+batches.length+')'));
+  const selectedIds = new Set();
+  const countSpan = el('span',{style:'color:var(--accent2);font-weight:700'},'0 selected');
 
-  batches.forEach(b=>{
-    const date = b.date || '';
-    const source = b.source || 'import';
-    const count = parseInt(b.count||0);
-    const unassigned = parseInt(b.unassigned||0);
-    const assigned = count - unassigned;
-    const srcColors={cold_call:'#3b82f6',ads:'#f59e0b',import:'#8b5cf6',referral:'#22c55e',audit:'#06b6d4',manual:'#94a3b8'};
-    const sc = srcColors[source]||'#8b5cf6';
+  const delSelBtn = el('button',{className:'btn btn-danger btn-sm',onClick:async()=>{
+    if(!selectedIds.size){mDiv.className='alert alert-error';mDiv.textContent='Select leads first.';return;}
+    if(!confirm('Delete '+selectedIds.size+' selected leads? Cannot undo!')) return;
+    delSelBtn.disabled=true;delSelBtn.textContent='Deleting...';
+    const res = await api.delBody('/leads/bulk',{lead_ids:[...selectedIds]});
+    delSelBtn.disabled=false;delSelBtn.textContent='Delete Selected';
+    if(res.ok){mDiv.className='alert alert-success';mDiv.textContent='Deleted '+res.count+' leads.';setTimeout(()=>renderManageImports(container),1500);}
+    else{mDiv.className='alert alert-error';mDiv.textContent=res.error||'Delete failed';}
+  }},'Delete Selected');
 
-    const row = el('div',{style:'display:flex;align-items:center;gap:14px;padding:14px;background:var(--bg4);border-radius:10px;margin-bottom:10px;border:1px solid var(--border);flex-wrap:wrap'});
+  const tCard = el('div',{className:'card'});
+  tCard.appendChild(el('div',{style:'display:flex;justify-content:space-between;align-items:center;margin-bottom:12px'},
+    el('div',{className:'card-title',style:'margin:0'},'All Imported Leads ('+totalCount+' total)'),
+    el('div',{style:'display:flex;gap:8px;align-items:center'},countSpan,delSelBtn)
+  ));
 
-    // Source + date
-    row.appendChild(el('div',{style:`background:${sc}22;color:${sc};border:1px solid ${sc}44;border-radius:8px;padding:8px 12px;text-align:center;min-width:90px;flex-shrink:0`},
-      el('div',{style:'font-size:11px;font-weight:700;text-transform:uppercase'},source.replace('_',' ')),
-      el('div',{style:'font-size:11px;margin-top:2px;opacity:0.8'},date)
-    ));
-
-    // Stats
-    row.appendChild(el('div',{style:'flex:1;min-width:180px'},
-      el('div',{style:'display:flex;gap:16px;margin-bottom:8px'},
-        el('div',{},el('div',{style:'font-size:20px;font-weight:800;color:var(--text)'},String(count)),el('div',{style:'font-size:10px;color:var(--muted);text-transform:uppercase'},'Total')),
-        el('div',{},el('div',{style:'font-size:20px;font-weight:800;color:#22c55e'},String(assigned)),el('div',{style:'font-size:10px;color:var(--muted);text-transform:uppercase'},'Assigned')),
-        el('div',{},el('div',{style:'font-size:20px;font-weight:800;color:#ef4444'},String(unassigned)),el('div',{style:'font-size:10px;color:var(--muted);text-transform:uppercase'},'Unassigned'))
-      ),
-      el('div',{style:'background:var(--bg);border-radius:999px;height:5px;overflow:hidden'},
-        el('div',{style:`width:${count>0?Math.round((assigned/count)*100):0}%;background:#22c55e;height:100%;border-radius:999px`})
-      )
-    ));
-
-    // Buttons
-    const btns = el('div',{style:'display:flex;flex-direction:column;gap:6px;flex-shrink:0'});
-
-    if(unassigned>0) {
-      const d1 = el('button',{className:'btn btn-danger btn-sm',onClick:async()=>{
-        if(!confirm('Delete '+unassigned+' unassigned leads from this batch?')) return;
-        d1.disabled=true; d1.textContent='Deleting...';
-        const r = await api.delBody('/leads/bulk',{filter_source:source,filter_date:date});
-        if(r.ok){mDiv.className='alert alert-success';mDiv.textContent='Deleted '+r.count+' leads.';setTimeout(()=>renderManageImports(container),1500);}
-        else{mDiv.className='alert alert-error';mDiv.textContent=r.error;d1.disabled=false;d1.textContent='Delete Unassigned ('+unassigned+')';}
-      }},'Delete Unassigned ('+unassigned+')');
-      btns.appendChild(d1);
-    }
-
-    const d2 = el('button',{className:'btn btn-danger btn-sm',onClick:async()=>{
-      if(!confirm('Delete ALL '+count+' leads from this batch including assigned? Cannot undo!')) return;
-      d2.disabled=true; d2.textContent='Deleting...';
-      const r = await api.delBody('/leads/bulk',{filter_source:source,filter_date:date});
-      if(r.ok){mDiv.className='alert alert-success';mDiv.textContent='Deleted '+r.count+' leads.';setTimeout(()=>renderManageImports(container),1500);}
-      else{mDiv.className='alert alert-error';mDiv.textContent=r.error;d2.disabled=false;d2.textContent='Delete Entire Batch';}
-    }},'Delete Entire Batch ('+count+')');
-    btns.appendChild(d2);
-
-    row.appendChild(btns);
-    bCard.appendChild(row);
+  const allCb = el('input',{type:'checkbox'});
+  allCb.addEventListener('change',()=>{
+    allLeads.forEach(l=>allCb.checked?selectedIds.add(l.id):selectedIds.delete(l.id));
+    tCard.querySelectorAll('.lead-cb').forEach(cb=>cb.checked=allCb.checked);
+    countSpan.textContent=selectedIds.size+' selected';
   });
 
-  container.appendChild(bCard);
+  const tw = el('div',{className:'table-wrap'});
+  const tbl = el('table',{});
+  tbl.appendChild(el('thead',{},el('tr',{},
+    el('th',{style:'width:36px'},allCb),
+    ...['Name','Phone','Source','Status','Date','Action'].map(h=>el('th',{},h))
+  )));
+  const tbody = el('tbody',{});
+  allLeads.forEach(l=>{
+    const cb = el('input',{type:'checkbox',className:'lead-cb'});
+    cb.addEventListener('change',()=>{cb.checked?selectedIds.add(l.id):selectedIds.delete(l.id);countSpan.textContent=selectedIds.size+' selected';});
+    const delBtn = el('button',{className:'btn btn-danger btn-xs',onClick:async()=>{
+      if(!confirm('Delete this lead?')) return;
+      const res = await api.del('/leads/'+l.id);
+      if(res.ok){mDiv.className='alert alert-success';mDiv.textContent='Lead deleted.';setTimeout(()=>renderManageImports(container),1000);}
+      else{mDiv.className='alert alert-error';mDiv.textContent=res.error;}
+    }},'Delete');
+    tbody.appendChild(el('tr',{},
+      el('td',{},cb),
+      el('td',{style:'font-weight:600'},l.name||'—'),
+      el('td',{style:'font-family:monospace;font-size:12px;color:var(--muted2)'},l.phone||'—'),
+      el('td',{},el('span',{style:'background:#8b5cf622;color:#8b5cf6;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600'},l.source||'—')),
+      el('td',{},el('span',{style:`background:${(CALL_MAP[l.status||'pending']?.color||'#94a3b8')}22;color:${(CALL_MAP[l.status||'pending']?.color||'#94a3b8')};padding:2px 8px;border-radius:4px;font-size:11px`},l.status||'—')),
+      el('td',{style:'font-size:12px;color:var(--muted)'},fmtDay(l.createdAt)),
+      el('td',{},delBtn)
+    ));
+  });
+  tbl.appendChild(tbody);
+  tw.appendChild(tbl);
+  tCard.appendChild(tw);
+  container.appendChild(tCard);
 }
 
 
