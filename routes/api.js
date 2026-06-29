@@ -7,6 +7,7 @@ const { Op } = require('sequelize');
 const {
   sequelize, User, Lead, Client, ClientActivity, CallLog,
   Audit, Task, Invoice, Proposal, Notification, WACampaign,
+  WorkSchedule, WorkLog,
   calculateLeadScore, calculateGST
 } = require('../db');
 const { apiAuth, apiAdmin, apiAdminOrAuditor } = require('../middleware/auth');
@@ -880,6 +881,176 @@ router.post('/whatsapp/send', apiAuth, async (req, res) => {
       res.json({ ok: true });
     } else res.json({ ok: false, error: data.error?.message||'Send failed' });
   } catch (e) { res.json({ ok: false, error: e.message }); }
+});
+
+// ── WORK SCHEDULE ────────────────────────────────────────────────────
+router.get('/work/schedule/:user_id', apiAdmin, async (req, res) => {
+  try {
+    let schedule = await WorkSchedule.findOne({ where: { user_id: req.params.user_id } });
+    if(!schedule) {
+      schedule = await WorkSchedule.create({ user_id: req.params.user_id });
+    }
+    res.json({ ok: true, data: schedule });
+  } catch(e) { res.json({ ok: false, error: e.message }); }
+});
+
+router.post('/work/schedule/:user_id', apiAdmin, async (req, res) => {
+  try {
+    let schedule = await WorkSchedule.findOne({ where: { user_id: req.params.user_id } });
+    if(schedule) {
+      await schedule.update(req.body);
+    } else {
+      schedule = await WorkSchedule.create({ user_id: req.params.user_id, ...req.body });
+    }
+    res.json({ ok: true, data: schedule });
+  } catch(e) { res.json({ ok: false, error: e.message }); }
+});
+
+router.get('/work/schedules', apiAdmin, async (req, res) => {
+  try {
+    const schedules = await WorkSchedule.findAll({
+      include: [{ model: User, attributes: ['id','name','username','role','avatar_color'], required: false }]
+    });
+    res.json({ ok: true, data: schedules });
+  } catch(e) { res.json({ ok: false, error: e.message }); }
+});
+
+// ── WORK LOGS ─────────────────────────────────────────────────────────
+router.post('/work/login', apiAuth, async (req, res) => {
+  try {
+    const userId = parseInt(req.session.user.id);
+    const today = new Date().toISOString().slice(0,10);
+    
+    // Check if already logged in today
+    let log = await WorkLog.findOne({ where: { user_id: userId, date: today } });
+    if(log && log.login_at) {
+      return res.json({ ok: false, error: 'Already logged in today', data: log });
+    }
+    
+    const now = new Date();
+    const schedule = await WorkSchedule.findOne({ where: { user_id: userId } });
+    
+    // Determine if late
+    let status = 'present';
+    if(schedule) {
+      const [schedHour, schedMin] = schedule.work_start.split(':').map(Number);
+      const schedTime = schedHour * 60 + schedMin;
+      const nowTime = now.getHours() * 60 + now.getMinutes();
+      if(nowTime > schedTime + 15) status = 'late';
+    }
+    
+    if(log) {
+      await log.update({ login_at: now, status });
+    } else {
+      log = await WorkLog.create({ user_id: userId, date: today, login_at: now, status });
+    }
+    
+    res.json({ ok: true, data: log, status });
+  } catch(e) { res.json({ ok: false, error: e.message }); }
+});
+
+router.post('/work/logout', apiAuth, async (req, res) => {
+  try {
+    const userId = parseInt(req.session.user.id);
+    const today = new Date().toISOString().slice(0,10);
+    const log = await WorkLog.findOne({ where: { user_id: userId, date: today } });
+    
+    if(!log || !log.login_at) {
+      return res.json({ ok: false, error: 'No login record found for today' });
+    }
+    if(log.logout_at) {
+      return res.json({ ok: false, error: 'Already logged out today' });
+    }
+    
+    const now = new Date();
+    const duration = Math.round((now - new Date(log.login_at)) / (1000 * 60));
+    await log.update({ logout_at: now, duration_mins: duration });
+    
+    const hours = Math.floor(duration/60);
+    const mins = duration%60;
+    res.json({ ok: true, duration_mins: duration, duration_str: hours+'h '+mins+'m', data: log });
+  } catch(e) { res.json({ ok: false, error: e.message }); }
+});
+
+router.get('/work/today', apiAuth, async (req, res) => {
+  try {
+    const userId = parseInt(req.session.user.id);
+    const today = new Date().toISOString().slice(0,10);
+    const log = await WorkLog.findOne({ where: { user_id: userId, date: today } });
+    const schedule = await WorkSchedule.findOne({ where: { user_id: userId } });
+    res.json({ ok: true, log, schedule });
+  } catch(e) { res.json({ ok: false, error: e.message }); }
+});
+
+router.get('/work/logs', apiAdmin, async (req, res) => {
+  try {
+    const { from, to, user_id } = req.query;
+    const where = {};
+    if(user_id) where.user_id = parseInt(user_id);
+    if(from) where.date = { [Op.gte]: from };
+    if(to) where.date = { ...(where.date||{}), [Op.lte]: to };
+    const logs = await WorkLog.findAll({
+      where,
+      include: [{ model: User, attributes: ['id','name','username','avatar_color'], required: false }],
+      order: [['date','DESC']]
+    });
+    res.json({ ok: true, data: logs });
+  } catch(e) { res.json({ ok: false, error: e.message }); }
+});
+
+router.get('/work/my-logs', apiAuth, async (req, res) => {
+  try {
+    const userId = parseInt(req.session.user.id);
+    const logs = await WorkLog.findAll({
+      where: { user_id: userId },
+      order: [['date','DESC']],
+      limit: 30
+    });
+    res.json({ ok: true, data: logs });
+  } catch(e) { res.json({ ok: false, error: e.message }); }
+});
+
+// Followup notifications for staff
+router.get('/work/followup-alerts', apiAuth, async (req, res) => {
+  try {
+    const userId = parseInt(req.session.user.id);
+    const now = new Date();
+    const today = now.toISOString().slice(0,10);
+    const in30 = new Date(now.getTime() + 30*60*1000);
+    const in30Str = in30.toISOString().slice(0,10);
+    
+    // Overdue callbacks
+    const overdueCallbacks = await Lead.count({
+      where: { assigned_to: userId, status: 'callback', callback_date: { [Op.lt]: today } }
+    });
+    
+    // Today callbacks
+    const todayCallbacks = await Lead.count({
+      where: { assigned_to: userId, status: 'callback', callback_date: today }
+    });
+    
+    // Overdue client followups
+    const overdueFollowups = await Client.count({
+      where: { 
+        [Op.or]: [{ assigned_to: userId }, { managed_by: userId }],
+        next_followup: { [Op.lt]: today },
+        pipeline_stage: { [Op.notIn]: ['completed','lost'] }
+      }
+    });
+    
+    // Today client followups
+    const todayFollowups = await Client.count({
+      where: {
+        [Op.or]: [{ assigned_to: userId }, { managed_by: userId }],
+        next_followup: today,
+        pipeline_stage: { [Op.notIn]: ['completed','lost'] }
+      }
+    });
+
+    const total = overdueCallbacks + todayCallbacks + overdueFollowups + todayFollowups;
+    
+    res.json({ ok: true, overdueCallbacks, todayCallbacks, overdueFollowups, todayFollowups, total });
+  } catch(e) { res.json({ ok: false, error: e.message }); }
 });
 
 module.exports = router;
