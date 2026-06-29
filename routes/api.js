@@ -14,6 +14,24 @@ const { apiAuth, apiAdmin, apiAdminOrAuditor } = require('../middleware/auth');
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10*1024*1024 } });
 
+// ── WHATSAPP NOTIFICATION HELPER ─────────────────────────────────
+async function sendWANotification(phone, message) {
+  try {
+    const TOKEN = process.env.WHATSAPP_TOKEN;
+    const PHONE_ID = process.env.WHATSAPP_PHONE_ID;
+    if (!TOKEN || !PHONE_ID || !phone) return false;
+    const cleanPhone = phone.replace(/[^0-9]/g,'');
+    if(!cleanPhone || cleanPhone.length < 10) return false;
+    const r = await fetch(`https://graph.facebook.com/v18.0/${PHONE_ID}/messages`, {
+      method:'POST',
+      headers:{'Authorization':`Bearer ${TOKEN}`,'Content-Type':'application/json'},
+      body: JSON.stringify({ messaging_product:'whatsapp', to: cleanPhone, type:'text', text:{ body: message } })
+    });
+    const data = await r.json();
+    return !!data.messages;
+  } catch(e) { console.error('WA Notification error:', e.message); return false; }
+}
+
 // ── AUTH ──────────────────────────────────────────────────────────
 router.post('/login', async (req, res) => {
   try {
@@ -321,6 +339,20 @@ router.post('/leads/assign', apiAdmin, async (req, res) => {
     const { lead_ids, staff_id } = req.body;
     if (!lead_ids?.length) return res.json({ ok: false, error: 'No leads selected' });
     await Lead.update({ assigned_to: parseInt(staff_id) }, { where: { id: { [Op.in]: lead_ids } } });
+    // Send WA notification to staff
+    try {
+      const staff = await User.findByPk(parseInt(staff_id), { attributes: ['name','whatsapp'] });
+      if(staff?.whatsapp) {
+        const msg = `🎯 *Macto AI CRM Alert*
+
+Hi ${staff.name}! 📋 *${lead_ids.length} new lead(s)* have been assigned to you.
+
+Please login to your CRM and start calling.
+
+🚀 *Macto AI CRM*`;
+        await sendWANotification(staff.whatsapp, msg);
+      }
+    } catch(e) { console.error('WA assign notify error:', e.message); }
     res.json({ ok: true, count: lead_ids.length });
   } catch (e) { res.json({ ok: false, error: e.message }); }
 });
@@ -548,6 +580,24 @@ router.post('/tasks', apiAuth, async (req, res) => {
     const task = await Task.create({ ...req.body, created_by: parseInt(req.session.user.id) });
     if (task.assigned_to !== parseInt(req.session.user.id)) {
       await Notification.create({ user_id: task.assigned_to, title: '✅ New Task: '+task.title, message: `Due: ${task.due_date||'No deadline'}`, type: 'task' });
+      // Send WA notification
+      try {
+        const staff = await User.findByPk(task.assigned_to, { attributes: ['name','whatsapp'] });
+        if(staff?.whatsapp) {
+          const msg = `✅ *Macto AI CRM — New Task*
+
+Hi ${staff.name}!
+
+📋 *Task:* ${task.title}
+📅 *Due:* ${task.due_date||'No deadline'}
+⚡ *Priority:* ${task.priority?.toUpperCase()||'MEDIUM'}
+
+Please check your CRM dashboard.
+
+🚀 *Macto AI CRM*`;
+          await sendWANotification(staff.whatsapp, msg);
+        }
+      } catch(e) { console.error('WA task notify error:', e.message); }
     }
     res.json({ ok: true, data: task });
   } catch (e) { res.json({ ok: false, error: e.message }); }
@@ -618,6 +668,25 @@ router.put('/invoices/:id', apiAuth, async (req, res) => {
       req.body.paid_at = new Date();
       await Client.update({ pipeline_stage: 'advance_paid', total_received: sequelize.literal(`total_received + ${inv.total}`) }, { where: { id: inv.client_id } });
       await ClientActivity.create({ client_id: inv.client_id, user_id: parseInt(req.session.user.id), type: 'payment', title: `Invoice ${inv.invoice_no} marked paid`, amount: inv.total });
+      // Send WA notification to staff who created invoice
+      try {
+        const client = await Client.findByPk(inv.client_id, { attributes: ['name'] });
+        const creator = await User.findByPk(inv.created_by, { attributes: ['name','whatsapp'] });
+        if(creator?.whatsapp) {
+          const msg = `💰 *Macto AI CRM — Payment Received!*
+
+Hi ${creator.name}! 🎉
+
+✅ *Invoice:* ${inv.invoice_no}
+👤 *Client:* ${client?.name||'—'}
+💵 *Amount:* ₹${Number(inv.total).toLocaleString('en-IN')}
+
+Payment has been marked as received!
+
+🚀 *Macto AI CRM*`;
+          await sendWANotification(creator.whatsapp, msg);
+        }
+      } catch(e) { console.error('WA invoice notify error:', e.message); }
     }
     await inv.update(req.body);
     res.json({ ok: true });
@@ -1050,6 +1119,70 @@ router.get('/work/followup-alerts', apiAuth, async (req, res) => {
     const total = overdueCallbacks + todayCallbacks + overdueFollowups + todayFollowups;
     
     res.json({ ok: true, overdueCallbacks, todayCallbacks, overdueFollowups, todayFollowups, total });
+  } catch(e) { res.json({ ok: false, error: e.message }); }
+});
+
+// ── SEND CALLBACK REMINDERS ──────────────────────────────────────
+router.post('/notifications/send-reminders', apiAdmin, async (req, res) => {
+  try {
+    const today = new Date().toISOString().slice(0,10);
+    // Get all callback leads due today
+    const callbackLeads = await Lead.findAll({
+      where: { status: 'callback', callback_date: today, assigned_to: { [Op.ne]: null } },
+      include: [{ model: User, as: 'assignedStaff', attributes: ['name','whatsapp'], required: false }]
+    });
+
+    // Get all client followups due today
+    const clientFollowups = await Client.findAll({
+      where: { next_followup: today, pipeline_stage: { [Op.notIn]: ['completed','lost'] }, assigned_to: { [Op.ne]: null } },
+      include: [{ model: User, as: 'assignedStaff', attributes: ['name','whatsapp'], required: false }]
+    });
+
+    // Get tasks due today
+    const tasksDue = await Task.findAll({
+      where: { due_date: today, status: { [Op.in]: ['pending','in_progress'] } },
+      include: [{ model: User, as: 'assignedTo', attributes: ['name','whatsapp'], required: false }]
+    });
+
+    let sent = 0;
+    const staffMessages = {};
+
+    // Group callbacks by staff
+    callbackLeads.forEach(l => {
+      if(!l.assignedStaff?.whatsapp) return;
+      const key = l.assignedStaff.whatsapp;
+      if(!staffMessages[key]) staffMessages[key] = { name: l.assignedStaff.name, callbacks: [], followups: [], tasks: [] };
+      staffMessages[key].callbacks.push(l.name||'Unknown');
+    });
+
+    // Group client followups by staff
+    clientFollowups.forEach(c => {
+      if(!c.assignedStaff?.whatsapp) return;
+      const key = c.assignedStaff.whatsapp;
+      if(!staffMessages[key]) staffMessages[key] = { name: c.assignedStaff.name, callbacks: [], followups: [], tasks: [] };
+      staffMessages[key].followups.push(c.name+(c.company?' ('+c.company+')':''));
+    });
+
+    // Group tasks by staff
+    tasksDue.forEach(t => {
+      if(!t.assignedTo?.whatsapp) return;
+      const key = t.assignedTo.whatsapp;
+      if(!staffMessages[key]) staffMessages[key] = { name: t.assignedTo.name, callbacks: [], followups: [], tasks: [] };
+      staffMessages[key].tasks.push(t.title);
+    });
+
+    // Send combined message to each staff
+    for(const [phone, data] of Object.entries(staffMessages)) {
+      let msg = '🔔 *Macto AI CRM — Daily Reminder*\n\nHi '+data.name+'! Here is your todays work summary:\n\n';
+      if(data.callbacks.length) msg += '📞 *Callbacks Due Today ('+data.callbacks.length+'):*\n'+data.callbacks.slice(0,5).map(n=>'• '+n).join('\n')+'\n\n';
+      if(data.followups.length) msg += '👥 *Client Follow-ups Due ('+data.followups.length+'):*\n'+data.followups.slice(0,5).map(n=>'• '+n).join('\n')+'\n\n';
+      if(data.tasks.length) msg += '✅ *Tasks Due Today ('+data.tasks.length+'):*\n'+data.tasks.slice(0,5).map(n=>'• '+n).join('\n')+'\n\n';
+      msg += 'Login to your CRM and complete these tasks!\n\n🚀 *Macto AI CRM*';
+      const ok = await sendWANotification(phone, msg);
+      if(ok) sent++;
+    }
+
+    res.json({ ok: true, sent, total: Object.keys(staffMessages).length, message: `Sent ${sent} reminder(s) to staff` });
   } catch(e) { res.json({ ok: false, error: e.message }); }
 });
 
