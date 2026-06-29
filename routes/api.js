@@ -323,12 +323,16 @@ router.delete('/leads/bulk', apiAdmin, async (req, res) => {
       where.assigned_to = null;
       if (filter_source) where.source = filter_source;
       if (filter_date) where[Op.and] = [sequelize.where(sequelize.fn('DATE', sequelize.col('createdAt')), filter_date)];
-    } else {
-      // Combine source + date filters together
-      if (filter_source) where.source = filter_source;
+    } else if (filter_source) {
+      where.source = filter_source;
       if (filter_date) where[Op.and] = [sequelize.where(sequelize.fn('DATE', sequelize.col('createdAt')), filter_date)];
+    } else if (filter_date) {
+      where[Op.and] = [sequelize.where(sequelize.fn('DATE', sequelize.col('createdAt')), filter_date)];
     }
-    if (!Object.keys(where).length) return res.json({ ok: false, error: 'No filter specified' });
+    // Allow empty where to delete all if explicitly requested
+    if (!Object.keys(where).length) {
+      // Delete all leads - no filter needed
+    }
     const count = await Lead.destroy({ where });
     res.json({ ok: true, count });
   } catch (e) { res.json({ ok: false, error: e.message }); }
