@@ -26,7 +26,18 @@ router.post('/login', async (req, res) => {
 });
 
 router.post('/logout', (req, res) => { req.session.destroy(() => res.json({ ok: true })); });
-router.get('/me', apiAuth, (req, res) => res.json({ ok: true, user: req.session.user }));
+router.get('/me', apiAuth, async (req, res) => {
+  try {
+    const user = await User.findByPk(req.session.user.id, { attributes: ['id','name','username','role','daily_target','email','avatar_color'] });
+    if(user) {
+      const freshUser = { id: user.id, name: user.name, username: user.username, role: user.role, daily_target: user.daily_target||50, email: user.email, avatar_color: user.avatar_color };
+      req.session.user = freshUser;
+      res.json({ ok: true, user: freshUser });
+    } else {
+      res.json({ ok: true, user: req.session.user });
+    }
+  } catch(e) { res.json({ ok: true, user: req.session.user }); }
+});
 
 router.post('/change-password', apiAuth, async (req, res) => {
   try {
