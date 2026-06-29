@@ -299,6 +299,20 @@ router.put('/leads/:id', apiAuth, async (req, res) => {
   } catch (e) { res.json({ ok: false, error: e.message }); }
 });
 
+router.delete('/leads/:id', apiAdmin, async (req, res) => {
+  await Lead.destroy({ where: { id: req.params.id } });
+  res.json({ ok: true });
+});
+
+router.post('/leads/assign', apiAdmin, async (req, res) => {
+  try {
+    const { lead_ids, staff_id } = req.body;
+    if (!lead_ids?.length) return res.json({ ok: false, error: 'No leads selected' });
+    await Lead.update({ assigned_to: parseInt(staff_id) }, { where: { id: { [Op.in]: lead_ids } } });
+    res.json({ ok: true, count: lead_ids.length });
+  } catch (e) { res.json({ ok: false, error: e.message }); }
+});
+
 router.delete('/leads/bulk', apiAdmin, async (req, res) => {
   try {
     const { lead_ids, filter_assigned, filter_source, filter_date } = req.body;
@@ -315,25 +329,14 @@ router.delete('/leads/bulk', apiAdmin, async (req, res) => {
     } else if (filter_date) {
       where[Op.and] = [sequelize.where(sequelize.fn('DATE', sequelize.col('createdAt')), filter_date)];
     }
+    // Allow empty where to delete all if explicitly requested
+    if (!Object.keys(where).length) {
+      // Delete all leads - no filter needed
+    }
     const count = await Lead.destroy({ where });
     res.json({ ok: true, count });
   } catch (e) { res.json({ ok: false, error: e.message }); }
 });
-
-router.delete('/leads/:id', apiAdmin, async (req, res) => {
-  await Lead.destroy({ where: { id: req.params.id } });
-  res.json({ ok: true });
-});
-
-router.post('/leads/assign', apiAdmin, async (req, res) => {
-  try {
-    const { lead_ids, staff_id } = req.body;
-    if (!lead_ids?.length) return res.json({ ok: false, error: 'No leads selected' });
-    await Lead.update({ assigned_to: parseInt(staff_id) }, { where: { id: { [Op.in]: lead_ids } } });
-    res.json({ ok: true, count: lead_ids.length });
-  } catch (e) { res.json({ ok: false, error: e.message }); }
-});
-
 
 router.post('/leads/:id/log', apiAuth, async (req, res) => {
   try {
@@ -411,6 +414,37 @@ router.post('/import', apiAdmin, upload.single('file'), async (req, res) => {
     });
     await Lead.bulkCreate(leads, { ignoreDuplicates: true });
     res.json({ ok: true, count: leads.length });
+  } catch (e) { res.json({ ok: false, error: e.message }); }
+});
+
+// ── TEAM ASSIGNMENT STATS ────────────────────────────────────────────
+router.get('/team/assignment-stats', apiAdmin, async (req, res) => {
+  try {
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const yesterday = new Date(today); yesterday.setDate(yesterday.getDate()-1);
+    const week = new Date(today); week.setDate(week.getDate()-7);
+    const month = new Date(today); month.setDate(month.getDate()-30);
+
+    const staffUsers = await User.findAll({ where: { active: true, role: 'staff' }, attributes: ['id','name','username','avatar_color','daily_target'] });
+
+    const stats = await Promise.all(staffUsers.map(async u => {
+      const [total, pending, called, interested, todayAssigned, yesterdayAssigned, weekAssigned, monthAssigned, todayCalls] = await Promise.all([
+        Lead.count({ where: { assigned_to: u.id } }),
+        Lead.count({ where: { assigned_to: u.id, status: 'pending' } }),
+        Lead.count({ where: { assigned_to: u.id, status: 'called' } }),
+        Lead.count({ where: { assigned_to: u.id, status: 'interested' } }),
+        Lead.count({ where: { assigned_to: u.id, updatedAt: { [Op.gte]: today } } }),
+        Lead.count({ where: { assigned_to: u.id, updatedAt: { [Op.gte]: yesterday, [Op.lt]: today } } }),
+        Lead.count({ where: { assigned_to: u.id, updatedAt: { [Op.gte]: week } } }),
+        Lead.count({ where: { assigned_to: u.id, updatedAt: { [Op.gte]: month } } }),
+        CallLog.count({ where: { staff_id: u.id, call_date: { [Op.gte]: today } } }),
+      ]);
+      const convRate = total > 0 ? ((interested/total)*100).toFixed(1) : '0.0';
+      return { id: u.id, name: u.name, username: u.username, avatar_color: u.avatar_color, daily_target: u.daily_target||50, total, pending, called, interested, todayAssigned, yesterdayAssigned, weekAssigned, monthAssigned, todayCalls, convRate };
+    }));
+
+    res.json({ ok: true, data: stats });
   } catch (e) { res.json({ ok: false, error: e.message }); }
 });
 
