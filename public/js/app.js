@@ -648,18 +648,25 @@ async function renderDashboard(container) {
 // ── STAFF DASHBOARD ──────────────────────────────────────────────
 async function renderStaffDash(container) {
   container.innerHTML = loading();
-  const [statsR, dailyR] = await Promise.all([api.get('/leads/stats'), api.get('/leads/stats')]);
-  const clients = await api.get('/clients?limit=5');
-  const tasks = await api.get('/tasks?status=pending');
+  // Fetch fresh user data to get latest daily_target
+  const [statsR, meR, clientsR, tasksR] = await Promise.all([
+    api.get('/leads/stats'),
+    api.get('/me'),
+    api.get('/clients?limit=5'),
+    api.get('/tasks?status=pending')
+  ]);
   container.innerHTML = '';
   container.appendChild(el('div',{className:'page-title'},'🏠 My Dashboard'));
 
+  // Update STATE.user with fresh data so target is always current
+  if(meR.ok) STATE.user = {...STATE.user, ...meR.user};
+
   const s = statsR.ok ? statsR : {total:0,byStatus:[],todayCalls:0,monthCalls:0};
   const byStatus = Object.fromEntries((s.byStatus||[]).map(x=>[x.status,parseInt(x.cnt)]));
-  const myClients = clients.ok ? clients.data : [];
-  const myTasks = tasks.ok ? tasks.data : [];
+  const myClients = clientsR.ok ? clientsR.data : [];
+  const myTasks = tasksR.ok ? tasksR.data : [];
 
-  // Today progress
+  // Today progress - always use fresh target from API
   const todayCalls = s.todayCalls||0;
   const target = STATE.user.daily_target || 50;
   const pct = Math.min(100, Math.round((todayCalls/target)*100));
