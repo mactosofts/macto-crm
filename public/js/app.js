@@ -1575,43 +1575,190 @@ async function renderRevenue(container) {
 // ── TEAM ──────────────────────────────────────────────────────────
 async function renderTeam(container) {
   container.innerHTML = loading();
-  const usersR = await api.get('/users');
+  const [usersR, analyticsR] = await Promise.all([api.get('/users'), api.get('/analytics/full')]);
   container.innerHTML = '';
-  container.appendChild(el('div',{className:'page-title'},'👥 Team Management'));
+
+  container.appendChild(el('div',{style:'display:flex;justify-content:space-between;align-items:center;margin-bottom:20px'},
+    el('div',{className:'page-title',style:'margin:0'},'👥 Team Management'),
+    el('button',{className:'btn btn-primary',onClick:()=>openAddUserModal(()=>renderTeam(container))},'+ Add Member')
+  ));
+
   const users = usersR.ok ? usersR.data : [];
+  const staffPerf = analyticsR.ok ? (analyticsR.staffPerf||[]) : [];
   const mDiv = el('div',{});
   container.appendChild(mDiv);
-  container.appendChild(el('button',{className:'btn btn-primary',style:'margin-bottom:14px',onClick:()=>openAddUserModal(()=>renderTeam(container))},'+ Add Team Member'));
-  const grid = el('div',{className:'stats-grid',style:'margin-bottom:16px'});
-  [{l:'Total Members',v:users.length,c:'#6366f1'},{l:'Staff',v:users.filter(u=>u.role==='staff').length,c:'#3b82f6'},
-   {l:'Admins',v:users.filter(u=>u.role==='admin').length,c:'#fbbf24'},{l:'Auditors',v:users.filter(u=>u.role==='auditor').length,c:'#06b6d4'}
-  ].forEach(k=>grid.appendChild(kpiCard(k.l,k.v,'',k.c)));
+
+  // Summary cards
+  const rColors={admin:'#fbbf24',staff:'#6366f1',auditor:'#06b6d4'};
+  const grid = el('div',{style:'display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:12px;margin-bottom:20px'});
+  [
+    {l:'Total Members',v:users.length,c:'#6366f1'},
+    {l:'Telecallers',v:users.filter(u=>u.role==='staff').length,c:'#3b82f6'},
+    {l:'Admins',v:users.filter(u=>u.role==='admin').length,c:'#fbbf24'},
+    {l:'Auditors',v:users.filter(u=>u.role==='auditor').length,c:'#06b6d4'},
+  ].forEach(k=>{
+    grid.appendChild(el('div',{style:`background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px;border-top:3px solid ${k.c}`},
+      el('div',{style:`font-size:26px;font-weight:900;color:${k.c}`},String(k.v)),
+      el('div',{style:'font-size:11px;color:var(--muted2);text-transform:uppercase;font-weight:600;margin-top:6px'},k.l)
+    ));
+  });
   container.appendChild(grid);
-  if(!users.length){container.appendChild(el('div',{className:'card'},el('p',{style:'text-align:center;color:var(--muted);padding:30px'},'No team members yet.')));return;}
-  const tw = el('div',{className:'table-wrap'},el('table',{},
-    el('thead',{},el('tr',{},...['Name','Username','Role','Daily Target','Joined','Actions'].map(h=>el('th',{},h)))),
-    el('tbody',{},...users.map(u=>{
-      const rColors={admin:'#fbbf24',staff:'#6366f1',auditor:'#06b6d4'};
-      const rc=rColors[u.role]||'#94a3b8';
-      return el('tr',{},
-        el('td',{style:'font-weight:600'},u.name),
-        el('td',{style:'font-family:monospace;color:var(--muted2)'},u.username),
-        el('td',{},el('span',{style:`background:${rc}22;color:${rc};padding:2px 8px;border-radius:4px;font-size:11px;font-weight:700`},u.role.toUpperCase())),
-        el('td',{style:'color:var(--muted2)'},u.daily_target||50),
-        el('td',{className:'td-muted'},fmtDay(u.createdAt)),
-        el('td',{},el('div',{style:'display:flex;gap:4px'},
-          el('button',{className:'btn btn-ghost btn-xs',onClick:()=>openEditUserModal(u,()=>renderTeam(container))},'✏️ Edit'),
-          u.username!=='admin'?el('button',{className:'btn btn-danger btn-xs',onClick:async()=>{
-            if(!confirm('Remove '+u.name+'?'))return;
-            const r=await api.del('/users/'+u.id);
-            if(r.ok)renderTeam(container);
-            else{mDiv.className='alert alert-error';mDiv.textContent=r.error;}
-          }},'🗑️'):null
-        ))
-      );
-    }))
-  ));
-  container.appendChild(tw);
+
+  if(!users.length){
+    container.appendChild(el('div',{className:'card',style:'text-align:center;padding:40px'},
+      el('div',{style:'font-size:40px;margin-bottom:12px'},'👥'),
+      el('div',{style:'color:var(--muted);margin-bottom:12px'},'No team members yet.'),
+      el('button',{className:'btn btn-primary',onClick:()=>openAddUserModal(()=>renderTeam(container))},'+ Add First Member')
+    ));
+    return;
+  }
+
+  // LEAD ASSIGNMENT HISTORY TABLE
+  const assignCard = el('div',{className:'card',style:'margin-bottom:20px'});
+  assignCard.appendChild(el('div',{className:'card-title'},'📋 Lead Assignment & Performance — Per Staff'));
+  assignCard.appendChild(el('div',{style:'color:var(--muted);font-size:12px;margin-bottom:14px'},'Real-time assignment counts and call performance for each staff member'));
+
+  const statsR = await api.get('/team/assignment-stats');
+  const staffStats = statsR.ok ? statsR.data : [];
+
+  if(!staffStats.length){
+    assignCard.appendChild(el('div',{style:'text-align:center;padding:20px;color:var(--muted)'},'No telecaller staff added yet. Add staff from the cards below.'));
+  } else {
+    const tw = el('div',{style:'overflow-x:auto'});
+    const tbl = el('table',{style:'width:100%;border-collapse:collapse;font-size:12px'});
+    tbl.appendChild(el('thead',{},el('tr',{style:'background:var(--bg4)'},
+      ...['Staff','Username','Today Calls','Today Assigned','Yesterday','Last 7 Days','Last 30 Days','Total Leads','Pending','Interested','Conv%'].map(h=>
+        el('th',{style:'padding:10px 12px;text-align:left;color:var(--muted);font-size:10px;font-weight:700;text-transform:uppercase;white-space:nowrap;border-bottom:1px solid var(--border)'},h)
+      )
+    )));
+    const tbody = el('tbody',{});
+
+    staffStats.forEach(s=>{
+      const cr = parseFloat(s.convRate||0);
+      const crColor = cr>=15?'#22c55e':cr>=8?'#f59e0b':'#ef4444';
+      const pct = s.daily_target>0?Math.min(100,Math.round((s.todayCalls/s.daily_target)*100)):0;
+      tbody.appendChild(el('tr',{style:'border-top:1px solid var(--border)'},
+        el('td',{style:'padding:10px 12px'},
+          el('div',{style:'display:flex;align-items:center;gap:8px'},
+            el('div',{style:`width:30px;height:30px;border-radius:50%;background:${s.avatar_color||'#6366f1'}33;border:2px solid ${s.avatar_color||'#6366f1'};display:flex;align-items:center;justify-content:center;font-weight:800;color:${s.avatar_color||'#6366f1'};font-size:12px;flex-shrink:0`},s.name.charAt(0).toUpperCase()),
+            el('div',{style:'font-weight:700'},s.name)
+          )
+        ),
+        el('td',{style:'padding:10px 12px;font-family:monospace;color:var(--muted2);font-size:11px'},'@'+s.username),
+        el('td',{style:'padding:10px 12px'},
+          el('div',{style:`color:#06b6d4;font-weight:800;font-size:14px`},String(s.todayCalls||0)+'/'+String(s.daily_target)),
+          el('div',{style:'background:var(--bg);border-radius:999px;height:4px;overflow:hidden;margin-top:3px;width:60px'},
+            el('div',{style:`width:${pct}%;background:#06b6d4;height:100%;border-radius:999px`})
+          )
+        ),
+        el('td',{style:'padding:10px 12px;color:#3b82f6;font-weight:700'},String(s.todayAssigned||0)),
+        el('td',{style:'padding:10px 12px;color:var(--muted2)'},String(s.yesterdayAssigned||0)),
+        el('td',{style:'padding:10px 12px;color:#8b5cf6;font-weight:600'},String(s.weekAssigned||0)),
+        el('td',{style:'padding:10px 12px;color:#a78bfa'},String(s.monthAssigned||0)),
+        el('td',{style:'padding:10px 12px;color:#6366f1;font-weight:800'},String(s.total||0)),
+        el('td',{style:'padding:10px 12px;color:#f59e0b;font-weight:700'},String(s.pending||0)),
+        el('td',{style:'padding:10px 12px;color:#22c55e;font-weight:700'},String(s.interested||0)),
+        el('td',{style:'padding:10px 12px'},el('span',{style:`color:${crColor};font-weight:800;font-size:13px`},cr+'%'))
+      ));
+    });
+
+    // Totals row
+    const T = (key) => staffStats.reduce((s,x)=>s+(parseInt(x[key])||0),0);
+    tbody.appendChild(el('tr',{style:'border-top:2px solid var(--accent);background:rgba(99,102,241,0.06)'},
+      el('td',{style:'padding:10px 12px;font-weight:800;color:var(--accent3);font-size:13px'},'📊 TOTAL'),
+      el('td',{},''),
+      el('td',{style:'padding:10px 12px;color:#06b6d4;font-weight:800'},String(T('todayCalls'))),
+      el('td',{style:'padding:10px 12px;color:#3b82f6;font-weight:800'},String(T('todayAssigned'))),
+      el('td',{style:'padding:10px 12px;color:var(--muted2);font-weight:700'},String(T('yesterdayAssigned'))),
+      el('td',{style:'padding:10px 12px;color:#8b5cf6;font-weight:800'},String(T('weekAssigned'))),
+      el('td',{style:'padding:10px 12px;color:#a78bfa;font-weight:700'},String(T('monthAssigned'))),
+      el('td',{style:'padding:10px 12px;color:#6366f1;font-weight:800;font-size:14px'},String(T('total'))),
+      el('td',{style:'padding:10px 12px;color:#f59e0b;font-weight:800'},String(T('pending'))),
+      el('td',{style:'padding:10px 12px;color:#22c55e;font-weight:800'},String(T('interested'))),
+      el('td',{})
+    ));
+
+    tbl.appendChild(tbody);
+    tw.appendChild(tbl);
+    assignCard.appendChild(tw);
+    assignCard.appendChild(el('p',{style:'color:var(--muted);font-size:11px;margin-top:8px'},'💡 Today Calls = calls made today · Today Assigned = leads updated today · Yesterday/7 Days/30 Days = leads assigned in that period'));
+  }
+  container.appendChild(assignCard);
+
+  // Staff cards - detailed view
+  const roleLabels = {admin:'Admin',staff:'Telecaller',auditor:'Auditor'};
+  const roleIcons = {admin:'👑',staff:'📞',auditor:'🔍'};
+
+  users.forEach(u=>{
+    const rc = rColors[u.role]||'#94a3b8';
+    const perf = staffPerf.find(s=>s.id===u.id)||{};
+    const cr = parseFloat(perf.convRate||0);
+    const crColor = cr>=15?'#22c55e':cr>=8?'#f59e0b':'#ef4444';
+
+    const card = el('div',{style:`background:var(--bg3);border:1px solid var(--border);border-radius:14px;padding:20px;margin-bottom:14px;border-left:4px solid ${rc}`});
+
+    // Header row
+    card.appendChild(el('div',{style:'display:flex;align-items:center;gap:14px;margin-bottom:16px'},
+      el('div',{style:`width:52px;height:52px;border-radius:50%;background:${rc}22;border:2px solid ${rc};display:flex;align-items:center;justify-content:center;font-weight:900;color:${rc};font-size:20px;flex-shrink:0`},u.name.charAt(0).toUpperCase()),
+      el('div',{style:'flex:1'},
+        el('div',{style:'font-weight:800;font-size:16px'},u.name),
+        el('div',{style:'display:flex;align-items:center;gap:8px;margin-top:4px'},
+          el('span',{style:`background:${rc}22;color:${rc};padding:3px 10px;border-radius:999px;font-size:11px;font-weight:700`},roleIcons[u.role]+' '+roleLabels[u.role].toUpperCase()),
+          el('span',{style:'font-family:monospace;color:var(--muted2);font-size:12px;background:var(--bg4);padding:2px 8px;border-radius:4px'},'@'+u.username)
+        ),
+        el('div',{style:'color:var(--muted);font-size:11px;margin-top:4px'},'Joined: '+fmtDay(u.createdAt)+' · Daily Target: '+String(u.daily_target||50)+' calls')
+      ),
+      el('div',{style:'display:flex;gap:6px;flex-shrink:0'},
+        el('button',{className:'btn btn-ghost btn-sm',onClick:()=>openEditUserModal(u,()=>renderTeam(container))},'✏️ Edit'),
+        u.username!=='admin'?el('button',{className:'btn btn-danger btn-sm',onClick:async()=>{
+          if(!confirm('Remove '+u.name+' from team? This cannot be undone.'))return;
+          const r=await api.del('/users/'+u.id);
+          if(r.ok){mDiv.className='alert alert-success';mDiv.textContent='✅ '+u.name+' removed.';renderTeam(container);}
+          else{mDiv.className='alert alert-error';mDiv.textContent=r.error;}
+        }},'🗑️ Remove'):null
+      )
+    ));
+
+    // Performance stats (only for staff/admin with data)
+    if(perf.totalLeads!==undefined) {
+      const statsRow = el('div',{style:'display:grid;grid-template-columns:repeat(auto-fill,minmax(100px,1fr));gap:8px;margin-bottom:14px'});
+      [
+        {l:'Total Leads',v:String(perf.totalLeads||0),c:'#6366f1'},
+        {l:'Pending',v:String(perf.pending||0),c:'#f59e0b'},
+        {l:'Called',v:String(perf.called||0),c:'#3b82f6'},
+        {l:'Interested',v:String(perf.interested||0),c:'#22c55e'},
+        {l:'Converted',v:String(perf.converted||0),c:'#4ade80'},
+        {l:'Month Calls',v:String(perf.monthCalls||0),c:'#06b6d4'},
+        {l:'Total Calls',v:String(perf.totalCalls||0),c:'#8b5cf6'},
+        {l:'Revenue',v:fmt(perf.revenue||0),c:'#22c55e'},
+      ].forEach(k=>{
+        statsRow.appendChild(el('div',{style:`background:var(--bg4);border-radius:8px;padding:10px;text-align:center;border-bottom:2px solid ${k.c}`},
+          el('div',{style:`font-size:16px;font-weight:800;color:${k.c}`},k.v),
+          el('div',{style:'font-size:10px;color:var(--muted);text-transform:uppercase;margin-top:2px'},k.l)
+        ));
+      });
+      card.appendChild(statsRow);
+
+      // Conv rate + progress
+      card.appendChild(el('div',{style:'display:flex;align-items:center;gap:14px'},
+        el('div',{style:`background:${crColor}22;color:${crColor};border-radius:10px;padding:8px 14px;font-weight:800;font-size:18px;border:1px solid ${crColor}44`},cr+'%',el('div',{style:'font-size:10px;font-weight:600;opacity:0.8'},'CONV RATE')),
+        el('div',{style:'flex:1'},
+          el('div',{style:'font-size:11px;color:var(--muted2);margin-bottom:4px'},'Lead Completion'),
+          el('div',{style:'background:var(--bg);border-radius:999px;height:8px;overflow:hidden'},
+            el('div',{style:`width:${perf.totalLeads>0?Math.round(((perf.totalLeads-(perf.pending||0))/perf.totalLeads)*100):0}%;background:linear-gradient(90deg,#6366f1,#22c55e);height:100%;border-radius:999px`})
+          ),
+          el('div',{style:'font-size:11px;color:var(--muted);margin-top:3px'},
+            'Score: '+String(perf.score||0)+
+            (perf.trend>0?' · 📈 +'+perf.trend+'% vs last month':perf.trend<0?' · 📉 '+perf.trend+'% vs last month':' · → Same as last month')
+          )
+        )
+      ));
+    } else {
+      card.appendChild(el('div',{style:'color:var(--muted);font-size:13px;text-align:center;padding:10px;background:var(--bg4);border-radius:8px'},'No performance data yet — assign leads to start tracking'));
+    }
+
+    container.appendChild(card);
+  });
 }
 
 function openAddUserModal(onSave) {
