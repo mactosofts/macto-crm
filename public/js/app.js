@@ -224,7 +224,7 @@ function renderApp() {
     {s:'Documents'},{id:'proposals',l:'📄 Proposals',i:'audit'},{id:'invoices',l:'🧾 Invoices',i:'money'},
     {s:'Work'},{id:'tasks',l:'✅ Tasks',i:'check'},
     {s:'Audits'},{id:'audits',l:'🔍 Audit Reports',i:'audit'},
-    {s:'Insights'},{id:'analytics',l:'📈 Analytics',i:'chart'},{id:'revenue',l:'💰 Revenue',i:'money'},
+    {s:'Insights'},{id:'analytics',l:'📈 Analytics',i:'chart'},{id:'staff_performance',l:'👥 Staff Performance',i:'users'},{id:'revenue',l:'💰 Revenue',i:'money'},
     {s:'Campaigns'},{id:'bulk_wa',l:'📢 Bulk WhatsApp',i:'phone'},{id:'wa_campaigns',l:'📊 WA Campaigns',i:'chart'},
     {s:'Settings'},{id:'team',l:'👥 Team',i:'users'},{id:'password',l:'🔐 Password',i:'check'},
   ] : isStaff ? [
@@ -340,6 +340,7 @@ function renderApp() {
       else if (tab==='audits') await renderAudits(main);
       else if (tab==='analytics') await renderAnalytics(main);
       else if (tab==='revenue') await renderRevenue(main);
+      else if (tab==='staff_performance') await renderStaffPerformance(main);
       else if (tab==='team') await renderTeam(main);
       else if (tab==='bulk_wa') await renderBulkWA(main);
       else if (tab==='wa_campaigns') await renderWACampaigns(main);
@@ -939,6 +940,31 @@ async function renderManageImports(container) {
 
   const mDiv = el('div',{style:'margin-bottom:12px'});
   container.appendChild(mDiv);
+
+  // BIG DELETE ALL BUTTON
+  const dangerCard = el('div',{style:'background:#1a0505;border:2px solid #ef4444;border-radius:12px;padding:20px;margin-bottom:16px;text-align:center'});
+  dangerCard.appendChild(el('div',{style:'font-size:16px;font-weight:800;color:#f87171;margin-bottom:8px'},'☢️ Nuclear Option — Delete ALL Leads'));
+  dangerCard.appendChild(el('div',{style:'color:var(--muted);font-size:13px;margin-bottom:14px'},'This will permanently delete ALL leads in the system. Cannot be undone.'));
+  const nukeBtn = el('button',{style:'background:#ef4444;color:#fff;border:none;border-radius:8px;padding:12px 32px;font-size:15px;font-weight:700;cursor:pointer',onClick:async()=>{
+    const confirm1 = confirm('DELETE ALL LEADS? This cannot be undone!');
+    if(!confirm1) return;
+    const confirm2 = confirm('Are you 100% sure? ALL '+totalCount+' leads will be deleted!');
+    if(!confirm2) return;
+    nukeBtn.disabled=true; nukeBtn.textContent='Deleting all leads...';
+    const res = await api.delBody('/leads/bulk',{filter_assigned:'unassigned'});
+    const res2 = await api.delBody('/leads/bulk',{filter_source:'import'});
+    const res3 = await api.delBody('/leads/bulk',{filter_source:'cold_call'});
+    const res4 = await api.delBody('/leads/bulk',{filter_source:'ads'});
+    const res5 = await api.delBody('/leads/bulk',{filter_source:'referral'});
+    const res6 = await api.delBody('/leads/bulk',{filter_source:'manual'});
+    const total = (res.count||0)+(res2.count||0)+(res3.count||0)+(res4.count||0)+(res5.count||0)+(res6.count||0);
+    mDiv.className='alert alert-success';
+    mDiv.textContent='✅ Deleted '+total+' leads total!';
+    nukeBtn.disabled=false; nukeBtn.textContent='☢️ Delete ALL Leads';
+    setTimeout(()=>renderManageImports(container),2000);
+  }},'☢️ DELETE ALL LEADS');
+  dangerCard.appendChild(nukeBtn);
+  container.appendChild(dangerCard);
 
   // Combine all leads
   const allLeads = [
@@ -2905,5 +2931,179 @@ async function renderKanban(container) {
   });
   container.appendChild(el('div',{style:'overflow-x:auto'},board));
 }
+
+boot();
+
+// ── STAFF PERFORMANCE PAGE ────────────────────────────────────────
+async function renderStaffPerformance(container) {
+  container.innerHTML = loading();
+  const [analyticsR, usersR] = await Promise.all([api.get('/analytics/full'), api.get('/users')]);
+  container.innerHTML = '';
+
+  container.appendChild(el('div',{style:'display:flex;justify-content:space-between;align-items:center;margin-bottom:24px'},
+    el('div',{className:'page-title',style:'margin:0'},'👥 Staff Performance'),
+    el('button',{className:'btn btn-ghost btn-sm',onClick:()=>renderStaffPerformance(container)},'🔄 Refresh')
+  ));
+
+  if(!analyticsR.ok){container.appendChild(alertEl('error','Failed to load analytics'));return;}
+
+  const staffList = analyticsR.staffPerf||[];
+  const users = usersR.ok?usersR.data:[];
+
+  if(!staffList.length){
+    container.appendChild(el('div',{className:'card',style:'text-align:center;padding:40px'},
+      el('div',{style:'font-size:40px;margin-bottom:12px'},'👥'),
+      el('div',{style:'color:var(--muted);font-size:14px;margin-bottom:12px'},'No staff members yet.'),
+      el('button',{className:'btn btn-primary',onClick:()=>{STATE.tab='team';render();}},'+ Add Team Members')
+    ));
+    return;
+  }
+
+  // TEAM OVERVIEW CARDS
+  const totalCalls = staffList.reduce((s,x)=>s+(x.totalCalls||0),0);
+  const totalMonthCalls = staffList.reduce((s,x)=>s+(x.monthCalls||0),0);
+  const totalLeads = staffList.reduce((s,x)=>s+(x.totalLeads||0),0);
+  const totalConverted = staffList.reduce((s,x)=>s+(x.converted||0),0);
+  const totalRevenue = staffList.reduce((s,x)=>s+(parseFloat(x.revenue)||0),0);
+  const avgConvRate = staffList.length>0?(staffList.reduce((s,x)=>s+parseFloat(x.convRate||0),0)/staffList.length).toFixed(1):0;
+
+  const overviewGrid = el('div',{style:'display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:14px;margin-bottom:24px'});
+  [
+    {l:'Team Members',v:staffList.length,c:'#6366f1',icon:'👥'},
+    {l:'Total Calls',v:totalCalls,c:'#3b82f6',icon:'📞'},
+    {l:'Month Calls',v:totalMonthCalls,c:'#06b6d4',icon:'📅'},
+    {l:'Total Leads',v:totalLeads,c:'#8b5cf6',icon:'📋'},
+    {l:'Converted',v:totalConverted,c:'#22c55e',icon:'✅'},
+    {l:'Team Revenue',v:fmt(totalRevenue),c:'#4ade80',icon:'💰'},
+    {l:'Avg Conv Rate',v:avgConvRate+'%',c:'#f59e0b',icon:'📊'},
+  ].forEach(k=>{
+    const card = el('div',{style:`background:var(--bg3);border:1px solid var(--border);border-radius:14px;padding:16px;border-top:3px solid ${k.c}`});
+    card.appendChild(el('div',{style:'display:flex;justify-content:space-between'},
+      el('div',{style:`font-size:22px;font-weight:900;color:${k.c}`},String(k.v)),
+      el('div',{style:'font-size:18px'},k.icon)
+    ));
+    card.appendChild(el('div',{style:'font-size:11px;color:var(--muted2);text-transform:uppercase;font-weight:600;margin-top:6px'},k.l));
+    overviewGrid.appendChild(card);
+  });
+  container.appendChild(overviewGrid);
+
+  // LEADERBOARD
+  const lbCard = el('div',{className:'card',style:'margin-bottom:20px'});
+  lbCard.appendChild(el('div',{className:'card-title'},'🏆 Leaderboard — Ranked by Performance Score'));
+  const medals = ['🥇','🥈','🥉'];
+  staffList.forEach((s,i)=>{
+    const cr = parseFloat(s.convRate||0);
+    const crColor = cr>=15?'#22c55e':cr>=8?'#f59e0b':'#ef4444';
+    const trend = s.trend>0?'📈 +'+s.trend+'%':s.trend<0?'📉 '+s.trend+'%':'→ 0%';
+    lbCard.appendChild(el('div',{style:`display:flex;align-items:center;gap:14px;padding:14px;background:${i===0?'rgba(251,191,36,0.05)':'var(--bg4)'};border-radius:10px;margin-bottom:8px;border:1px solid ${i===0?'rgba(251,191,36,0.2)':'var(--border)'}`},
+      el('div',{style:'font-size:24px;width:32px;text-align:center'},medals[i]||('#'+(i+1))),
+      el('div',{style:`width:42px;height:42px;border-radius:50%;background:${s.avatar_color||'#6366f1'}33;border:2px solid ${s.avatar_color||'#6366f1'};display:flex;align-items:center;justify-content:center;font-weight:800;color:${s.avatar_color||'#6366f1'};font-size:16px;flex-shrink:0`},s.name.charAt(0).toUpperCase()),
+      el('div',{style:'flex:1'},
+        el('div',{style:'font-weight:700;font-size:14px'},s.name),
+        el('div',{style:'font-size:11px;color:var(--muted2);margin-top:2px'},s.role+' · Score: '+s.score),
+        el('div',{style:'display:flex;gap:12px;margin-top:6px;flex-wrap:wrap'},
+          el('span',{style:'font-size:11px;color:#3b82f6'},'📞 '+s.totalCalls+' calls'),
+          el('span',{style:'font-size:11px;color:#06b6d4'},'📅 '+s.monthCalls+' this month'),
+          el('span',{style:'font-size:11px;color:#22c55e'},'⭐ '+s.interested+' interested'),
+          el('span',{style:'font-size:11px;color:#a78bfa'},'✅ '+s.converted+' converted'),
+          el('span',{style:'font-size:11px;color:var(--muted)'},trend)
+        )
+      ),
+      el('div',{style:'text-align:right;flex-shrink:0'},
+        el('div',{style:`font-size:26px;font-weight:900;color:${crColor}`},cr+'%'),
+        el('div',{style:'font-size:10px;color:var(--muted)'},'CONV RATE'),
+        el('div',{style:'font-size:13px;color:#4ade80;font-weight:700;margin-top:4px'},fmt(s.revenue||0))
+      )
+    ));
+  });
+  container.appendChild(lbCard);
+
+  // CALLS CHART - Month calls per staff
+  const callsChartCard = el('div',{className:'card',style:'margin-bottom:20px'});
+  callsChartCard.appendChild(el('div',{className:'card-title'},'📊 Monthly Calls per Staff Member'));
+  const callsCanvas = document.createElement('canvas');
+  callsCanvas.style.cssText='width:100%;height:220px;display:block';
+  callsChartCard.appendChild(callsCanvas);
+  container.appendChild(callsChartCard);
+
+  // CONVERSION CHART
+  const convChartCard = el('div',{className:'card',style:'margin-bottom:20px'});
+  convChartCard.appendChild(el('div',{className:'card-title'},'🎯 Conversion Rate per Staff'));
+  const convCanvas = document.createElement('canvas');
+  convCanvas.style.cssText='width:100%;height:220px;display:block';
+  convChartCard.appendChild(convCanvas);
+  container.appendChild(convChartCard);
+
+  // Draw charts
+  requestAnimationFrame(()=>{
+    const names = staffList.map(s=>s.name.split(' ')[0]);
+    const monthCalls = staffList.map(s=>s.monthCalls||0);
+    const convRates = staffList.map(s=>parseFloat(s.convRate||0));
+    drawBarChart(callsCanvas, names, monthCalls, '#3b82f6', '#06b6d4');
+    drawBarChart(convCanvas, names, convRates, '#22c55e', '#4ade80');
+  });
+
+  // INDIVIDUAL STAFF CARDS
+  container.appendChild(el('div',{className:'card-title',style:'margin-bottom:12px'},'📋 Individual Staff Details'));
+  staffList.forEach(s=>{
+    const cr = parseFloat(s.convRate||0);
+    const crColor = cr>=15?'#22c55e':cr>=8?'#f59e0b':'#ef4444';
+    const completion = s.totalLeads>0?Math.round(((s.totalLeads-(s.pending||0))/s.totalLeads)*100):0;
+    const sCard = el('div',{className:'card',style:'margin-bottom:14px'});
+
+    // Header
+    sCard.appendChild(el('div',{style:'display:flex;align-items:center;gap:14px;margin-bottom:16px;padding-bottom:14px;border-bottom:1px solid var(--border)'},
+      el('div',{style:`width:48px;height:48px;border-radius:50%;background:${s.avatar_color||'#6366f1'}33;border:2px solid ${s.avatar_color||'#6366f1'};display:flex;align-items:center;justify-content:center;font-weight:900;color:${s.avatar_color||'#6366f1'};font-size:20px`},s.name.charAt(0).toUpperCase()),
+      el('div',{style:'flex:1'},
+        el('div',{style:'font-weight:800;font-size:16px'},s.name),
+        el('div',{style:'color:var(--muted);font-size:12px;text-transform:capitalize'},s.role+' · Score: '+s.score)
+      ),
+      el('div',{style:'text-align:right'},
+        el('div',{style:`font-size:28px;font-weight:900;color:${crColor}`},cr+'%'),
+        el('div',{style:'font-size:11px;color:var(--muted)'},'Conversion Rate')
+      )
+    ));
+
+    // Stats grid
+    const statsRow = el('div',{style:'display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:10px;margin-bottom:14px'});
+    [
+      {l:'Total Leads',v:s.totalLeads||0,c:'#6366f1'},
+      {l:'Pending',v:s.pending||0,c:'#f59e0b'},
+      {l:'Called',v:s.called||0,c:'#3b82f6'},
+      {l:'Interested',v:s.interested||0,c:'#22c55e'},
+      {l:'Not Interested',v:s.not_interested||0,c:'#ef4444'},
+      {l:'Total Calls',v:s.totalCalls||0,c:'#8b5cf6'},
+      {l:'Month Calls',v:s.monthCalls||0,c:'#06b6d4'},
+      {l:'Last Month',v:s.lastMonthCalls||0,c:'#94a3b8'},
+      {l:'Converted',v:s.converted||0,c:'#4ade80'},
+      {l:'Revenue',v:fmt(s.revenue||0),c:'#22c55e'},
+    ].forEach(k=>{
+      statsRow.appendChild(el('div',{style:`background:var(--bg4);border-radius:8px;padding:10px;border-left:3px solid ${k.c}`},
+        el('div',{style:`font-size:18px;font-weight:800;color:${k.c}`},String(k.v)),
+        el('div',{style:'font-size:10px;color:var(--muted);text-transform:uppercase;margin-top:3px'},k.l)
+      ));
+    });
+    sCard.appendChild(statsRow);
+
+    // Progress bar
+    sCard.appendChild(el('div',{style:'margin-bottom:8px'},
+      el('div',{style:'display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px'},
+        el('span',{style:'color:var(--muted2)'},'Lead completion: '+completion+'%'),
+        el('span',{style:'color:#6366f1;font-weight:700'},s.totalLeads-( s.pending||0)+' of '+s.totalLeads+' leads actioned')
+      ),
+      el('div',{style:'background:var(--bg);border-radius:999px;height:8px;overflow:hidden'},
+        el('div',{style:`width:${completion}%;background:linear-gradient(90deg,#6366f1,#22c55e);height:100%;border-radius:999px`})
+      )
+    ));
+
+    // Trend
+    const trendColor = s.trend>0?'#22c55e':s.trend<0?'#ef4444':'#94a3b8';
+    const trendText = s.trend>0?'📈 +'+s.trend+'% vs last month':s.trend<0?'📉 '+s.trend+'% vs last month':'→ Same as last month';
+    sCard.appendChild(el('div',{style:`color:${trendColor};font-size:12px;font-weight:600`},trendText));
+
+    container.appendChild(sCard);
+  });
+}
+
 
 boot();
