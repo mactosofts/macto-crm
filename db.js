@@ -265,9 +265,13 @@ function calculateGST(subtotal, gstPercent, clientState, companyState = 'Kerala'
   }
 }
 
+WorkSchedule.belongsTo(User, { foreignKey: 'user_id' });
+WorkLog.belongsTo(User, { foreignKey: 'user_id' });
+
 module.exports = {
   sequelize, Op,
   User, Lead, Client, ClientActivity, CallLog,
   Audit, Task, Invoice, Proposal, Notification, WACampaign,
+  WorkSchedule, WorkLog,
   calculateLeadScore, calculateGST
 };
