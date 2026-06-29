@@ -254,6 +254,31 @@ function calculateLeadScore(lead) {
   return Math.min(score, 100);
 }
 
+// ── WORK SCHEDULE ─────────────────────────────────────────────────
+const WorkSchedule = sequelize.define('WorkSchedule', {
+  id:         { type: DataTypes.INTEGER, autoIncrement: true, primaryKey: true },
+  user_id:    { type: DataTypes.INTEGER, allowNull: false },
+  work_start: { type: DataTypes.STRING(5), defaultValue: '09:00' },
+  work_end:   { type: DataTypes.STRING(5), defaultValue: '18:00' },
+  work_days:  { type: DataTypes.JSON, defaultValue: [1,2,3,4,5,6] },
+  break_start:{ type: DataTypes.STRING(5), defaultValue: '13:00' },
+  break_end:  { type: DataTypes.STRING(5), defaultValue: '14:00' },
+  followup_reminder_mins: { type: DataTypes.INTEGER, defaultValue: 30 },
+  is_active:  { type: DataTypes.BOOLEAN, defaultValue: true },
+}, { tableName: 'work_schedules', timestamps: true, indexes: [] });
+
+// ── WORK LOGS ─────────────────────────────────────────────────────
+const WorkLog = sequelize.define('WorkLog', {
+  id:           { type: DataTypes.INTEGER, autoIncrement: true, primaryKey: true },
+  user_id:      { type: DataTypes.INTEGER, allowNull: false },
+  login_at:     { type: DataTypes.DATE, allowNull: true },
+  logout_at:    { type: DataTypes.DATE, allowNull: true },
+  duration_mins:{ type: DataTypes.INTEGER, defaultValue: 0 },
+  date:         { type: DataTypes.DATEONLY, allowNull: false },
+  status:       { type: DataTypes.ENUM('present','absent','late','half_day'), defaultValue: 'present' },
+  notes:        { type: DataTypes.TEXT, allowNull: true },
+}, { tableName: 'work_logs', timestamps: false, indexes: [] });
+
 // ── GST CALCULATOR ────────────────────────────────────────────────
 function calculateGST(subtotal, gstPercent, clientState, companyState = 'Kerala') {
   const gst = (subtotal * gstPercent) / 100;
