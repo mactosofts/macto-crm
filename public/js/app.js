@@ -220,7 +220,7 @@ function renderApp() {
   const tabs = isAdmin ? [
     {s:'Overview'},{id:'dashboard',l:'🏠 Dashboard',i:'dash'},
     {s:'Leads'},{id:'assign_leads',l:'📋 Assign Leads',i:'assign'},{id:'all_leads',l:'All Leads',i:'assign'},{id:'import',l:'📤 Import',i:'upload'},{id:'manage_imports',l:'🗑️ Manage Imports',i:'trash'},
-    {s:'Sales'},{id:'dialer',l:'📞 Dialer',i:'phone'},{id:'pipeline',l:'📊 Pipeline',i:'pipeline'},{id:'kanban',l:'🗂️ Kanban',i:'pipeline'},{id:'clients',l:'👥 All Clients',i:'users'},
+    {s:'Sales'},{id:'dialer',l:'📞 Dialer',i:'phone'},{id:'pipeline',l:'📊 Pipeline',i:'pipeline'},{id:'kanban',l:'🗂️ Kanban',i:'pipeline'},{id:'clients',l:'👥 All Clients',i:'users'},{id:'admin_followups',l:'🔔 Follow-ups',i:'audit'},
     {s:'Documents'},{id:'proposals',l:'📄 Proposals',i:'audit'},{id:'invoices',l:'🧾 Invoices',i:'money'},
     {s:'Work'},{id:'tasks',l:'✅ Tasks',i:'check'},
     {s:'Audits'},{id:'audits',l:'🔍 Audit Reports',i:'audit'},
@@ -342,6 +342,7 @@ function renderApp() {
       else if (tab==='revenue') await renderRevenue(main);
       else if (tab==='staff_performance') await renderStaffPerformance(main);
       else if (tab==='team') await renderTeam(main);
+      else if (tab==='admin_followups') await renderAdminFollowups(main);
       else if (tab==='bulk_wa') await renderBulkWA(main);
       else if (tab==='wa_campaigns') await renderWACampaigns(main);
       else if (tab==='password') renderPassword(main);
@@ -2365,51 +2366,202 @@ async function renderMyClients(container) {
 
 // ── FOLLOW-UPS ───────────────────────────────────────────────────
 async function renderFollowups(container) {
+  await renderAdminFollowups(container, true);
+}
+
+async function renderAdminFollowups(container, isStaffView=false) {
   container.innerHTML = loading();
-  const [leadsR, clientsR, usersR] = await Promise.all([api.get('/leads?status=callback&limit=300'), api.get('/clients?limit=300'), api.get('/users')]);
+  const [leadsR, clientsR, usersR] = await Promise.all([
+    api.get('/leads?status=callback&limit=500'),
+    api.get('/clients?limit=500'),
+    api.get('/users')
+  ]);
   const leads = leadsR.ok ? leadsR.data : [];
   const clients = clientsR.ok ? clientsR.data : [];
   const users = usersR.ok ? usersR.data : [];
   const today = new Date().toISOString().slice(0,10);
+  const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate()+1);
+  const tomorrowStr = tomorrow.toISOString().slice(0,10);
+  const next7 = new Date(); next7.setDate(next7.getDate()+7);
+  const next7Str = next7.toISOString().slice(0,10);
   container.innerHTML = '';
-  container.appendChild(el('div',{className:'page-title'},'🔔 Follow-ups'));
-  let activeModal=null;
 
-  function section(title,items,renderFn) {
-    const sec=el('div',{style:'margin-bottom:24px'},el('div',{style:'font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;margin-bottom:8px'},title+' ('+items.length+')'));
-    if(!items.length){sec.appendChild(el('p',{style:'color:var(--muted);font-size:13px'},'None'));return sec;}
-    const list=el('div',{className:'lead-list'});items.forEach(item=>list.appendChild(renderFn(item)));sec.appendChild(list);return sec;
+  // Header
+  container.appendChild(el('div',{style:'display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;flex-wrap:wrap;gap:10px'},
+    el('div',{className:'page-title',style:'margin:0'},'🔔 Follow-up Command Center'),
+    el('div',{style:'display:flex;gap:8px'},
+      el('button',{className:'btn btn-ghost btn-sm',onClick:()=>renderAdminFollowups(container,isStaffView)},'🔄 Refresh'),
+      !isStaffView?el('button',{className:'btn btn-primary btn-sm',onClick:()=>{STATE.tab='clients';render();}},'+ Add Client'):null
+    )
+  ));
+
+  // Filter by staff (admin only)
+  let staffFilter = 'all';
+  const staffUsers = users.filter(u=>u.role==='staff');
+
+  let filterBar = null;
+  if(!isStaffView && staffUsers.length) {
+    const staffSel = el('select',{className:'inp inp-sm',style:'max-width:200px'});
+    staffSel.appendChild(el('option',{value:'all'},'All Staff'));
+    staffUsers.forEach(u=>staffSel.appendChild(el('option',{value:String(u.id)},u.name)));
+    staffSel.addEventListener('change',()=>{staffFilter=staffSel.value;renderSections();});
+    filterBar = el('div',{style:'display:flex;gap:10px;align-items:center;margin-bottom:16px;flex-wrap:wrap'},
+      el('span',{style:'color:var(--muted);font-size:13px;font-weight:600'},'Filter by Staff:'),
+      staffSel
+    );
+    container.appendChild(filterBar);
   }
 
-  const callOverdue=leads.filter(l=>l.callback_date&&l.callback_date<today);
-  const callToday=leads.filter(l=>l.callback_date===today);
-  const clientDue=clients.filter(c=>c.next_followup&&c.next_followup<=today&&!['completed','lost'].includes(c.pipeline_stage));
-  const upcoming=clients.filter(c=>c.next_followup&&c.next_followup>today&&!['completed','lost'].includes(c.pipeline_stage));
+  // Summary KPI cards
+  const overdueLeads = leads.filter(l=>l.callback_date&&l.callback_date<today);
+  const todayLeads = leads.filter(l=>l.callback_date===today);
+  const tomorrowLeads = leads.filter(l=>l.callback_date===tomorrowStr);
+  const next7Leads = leads.filter(l=>l.callback_date&&l.callback_date>today&&l.callback_date<=next7Str);
+  const overdueClients = clients.filter(c=>c.next_followup&&c.next_followup<today&&!['completed','lost'].includes(c.pipeline_stage));
+  const todayClients = clients.filter(c=>c.next_followup===today&&!['completed','lost'].includes(c.pipeline_stage));
+  const upcomingClients = clients.filter(c=>c.next_followup&&c.next_followup>today&&!['completed','lost'].includes(c.pipeline_stage));
 
-  container.appendChild(section('🔴 Overdue Callbacks',callOverdue,l=>{
-    const card=el('div',{className:'lead-card',style:'border-left-color:#ef4444',onClick:()=>{if(activeModal)activeModal.remove();activeModal=renderCallModal(l,()=>{if(activeModal){activeModal.remove();activeModal=null;}renderFollowups(container);},()=>{if(activeModal){activeModal.remove();activeModal=null;}});document.body.appendChild(activeModal);}});
-    card.appendChild(el('div',{className:'lead-card-top'},el('div',{},el('div',{className:'lead-name'},l.name),el('div',{className:'lead-phone'},l.phone)),el('div',{style:'text-align:right'},callBadge(l.status),el('div',{style:'color:#ef4444;font-size:11px;margin-top:3px'},'📅 '+l.callback_date))));
-    if(l.last_note)card.appendChild(el('div',{className:'lead-note'},'📝 '+l.last_note));
-    return card;
-  }));
+  const kpiGrid = el('div',{style:'display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:12px;margin-bottom:20px'});
+  [
+    {l:'🔴 Overdue Callbacks',v:overdueLeads.length,c:'#ef4444'},
+    {l:'🟡 Today Callbacks',v:todayLeads.length,c:'#fbbf24'},
+    {l:'🕐 Tomorrow',v:tomorrowLeads.length,c:'#fb923c'},
+    {l:'📅 Next 7 Days',v:next7Leads.length,c:'#8b5cf6'},
+    {l:'🔴 Overdue Clients',v:overdueClients.length,c:'#ef4444'},
+    {l:'🟡 Client Due Today',v:todayClients.length,c:'#fbbf24'},
+    {l:'🟢 Upcoming Clients',v:upcomingClients.length,c:'#22c55e'},
+    {l:'📋 Total Pending',v:overdueLeads.length+todayLeads.length+overdueClients.length+todayClients.length,c:'#6366f1'},
+  ].forEach(k=>{
+    const card = el('div',{style:`background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:14px;border-left:4px solid ${k.c};cursor:pointer;transition:all 0.2s`});
+    card.addEventListener('mouseenter',()=>{card.style.transform='translateY(-2px)';card.style.boxShadow=`0 4px 16px ${k.c}22`;});
+    card.addEventListener('mouseleave',()=>{card.style.transform='';card.style.boxShadow='';});
+    card.appendChild(el('div',{style:`font-size:24px;font-weight:900;color:${k.c}`},String(k.v)));
+    card.appendChild(el('div',{style:'font-size:11px;color:var(--muted2);margin-top:4px;font-weight:600'},k.l));
+    kpiGrid.appendChild(card);
+  });
+  container.appendChild(kpiGrid);
 
-  container.appendChild(section('🟡 Callbacks Today',callToday,l=>{
-    const card=el('div',{className:'lead-card',style:'border-left-color:#fbbf24',onClick:()=>{if(activeModal)activeModal.remove();activeModal=renderCallModal(l,()=>{if(activeModal){activeModal.remove();activeModal=null;}renderFollowups(container);},()=>{if(activeModal){activeModal.remove();activeModal=null;}});document.body.appendChild(activeModal);}});
-    card.appendChild(el('div',{className:'lead-card-top'},el('div',{},el('div',{className:'lead-name'},l.name),el('div',{className:'lead-phone'},l.phone)),callBadge(l.status)));
-    return card;
-  }));
+  // Main sections area
+  const sectionsDiv = el('div',{});
+  container.appendChild(sectionsDiv);
 
-  container.appendChild(section('🟠 Client Follow-ups Due',clientDue,c=>{
-    const card=el('div',{className:'lead-card',style:'border-left-color:#fb923c',onClick:()=>openClientModal(c,users,()=>renderFollowups(container))});
-    card.appendChild(el('div',{className:'lead-card-top'},el('div',{},el('div',{className:'lead-name'},c.name+(c.company?' — '+c.company:'')),el('div',{className:'lead-meta'},catLabel(c.category))),el('div',{style:'text-align:right'},stageBadge(c.pipeline_stage),el('div',{style:'color:#fb923c;font-size:11px;margin-top:3px'},'📅 '+fmtDay(c.next_followup)))));
-    return card;
-  }));
+  let activeModal = null;
 
-  container.appendChild(section('🟢 Upcoming Follow-ups',upcoming.slice(0,20),c=>{
-    const card=el('div',{className:'lead-card',style:'border-left-color:#22c55e',onClick:()=>openClientModal(c,users,()=>renderFollowups(container))});
-    card.appendChild(el('div',{className:'lead-card-top'},el('div',{},el('div',{className:'lead-name'},c.name+(c.company?' — '+c.company:'')),el('div',{className:'lead-meta'},catLabel(c.category))),el('div',{style:'text-align:right'},stageBadge(c.pipeline_stage),el('div',{style:'color:#22c55e;font-size:11px;margin-top:3px'},'📅 '+fmtDay(c.next_followup)))));
+  function getStaffName(assigned_to) {
+    if(!assigned_to) return 'Unassigned';
+    const u = users.find(u=>u.id===assigned_to||u.id===parseInt(assigned_to));
+    return u ? u.name : 'Unknown';
+  }
+
+  function getDaysOverdue(dateStr) {
+    if(!dateStr) return 0;
+    const diff = Math.floor((new Date(today)-new Date(dateStr))/(1000*60*60*24));
+    return diff;
+  }
+
+  function renderLeadCard(l, borderColor) {
+    const staff = getStaffName(l.assigned_to);
+    const daysOverdue = getDaysOverdue(l.callback_date);
+    const card = el('div',{style:`background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:14px;border-left:4px solid ${borderColor};cursor:pointer;transition:all 0.15s;margin-bottom:8px`});
+    card.addEventListener('mouseenter',()=>{card.style.transform='translateX(2px)';});
+    card.addEventListener('mouseleave',()=>{card.style.transform='';});
+    card.addEventListener('click',()=>{
+      if(activeModal)activeModal.remove();
+      activeModal=renderCallModal(l,()=>{activeModal&&activeModal.remove();activeModal=null;renderAdminFollowups(container,isStaffView);},()=>{activeModal&&activeModal.remove();activeModal=null;});
+      document.body.appendChild(activeModal);
+    });
+    card.appendChild(el('div',{style:'display:flex;justify-content:space-between;align-items:flex-start;gap:10px'},
+      el('div',{style:'flex:1'},
+        el('div',{style:'font-weight:700;font-size:14px'},l.name||'Unknown'),
+        el('div',{style:'font-family:monospace;color:var(--muted2);font-size:13px;margin-top:2px'},l.phone||'—'),
+        el('div',{style:'display:flex;gap:8px;margin-top:6px;flex-wrap:wrap'},
+          el('span',{style:'font-size:11px;color:var(--muted2);background:var(--bg4);padding:2px 7px;border-radius:4px'},'👤 '+staff),
+          catLabel(l.category)?el('span',{style:'font-size:11px;color:var(--muted2);background:var(--bg4);padding:2px 7px;border-radius:4px'},catLabel(l.category)):null,
+          l.source?el('span',{style:'font-size:11px;color:var(--muted2);background:var(--bg4);padding:2px 7px;border-radius:4px'},l.source):null
+        ),
+        l.last_note?el('div',{style:'color:var(--muted);font-size:11px;margin-top:6px;font-style:italic;padding-top:6px;border-top:1px solid var(--border)'},'📝 '+l.last_note):null
+      ),
+      el('div',{style:'text-align:right;flex-shrink:0'},
+        callBadge(l.status),
+        el('div',{style:`color:${borderColor};font-size:11px;font-weight:700;margin-top:4px`},'📅 '+l.callback_date),
+        daysOverdue>0?el('div',{style:'color:#ef4444;font-size:10px;font-weight:700;margin-top:2px'},daysOverdue+' days overdue!'):null
+      )
+    ));
     return card;
-  }));
+  }
+
+  function renderClientCard(c, borderColor) {
+    const staff = getStaffName(c.assigned_to);
+    const daysOverdue = getDaysOverdue(c.next_followup);
+    const card = el('div',{style:`background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:14px;border-left:4px solid ${borderColor};cursor:pointer;transition:all 0.15s;margin-bottom:8px`});
+    card.addEventListener('mouseenter',()=>{card.style.transform='translateX(2px)';});
+    card.addEventListener('mouseleave',()=>{card.style.transform='';});
+    card.addEventListener('click',()=>openClientModal(c,users,()=>renderAdminFollowups(container,isStaffView)));
+    card.appendChild(el('div',{style:'display:flex;justify-content:space-between;align-items:flex-start;gap:10px'},
+      el('div',{style:'flex:1'},
+        el('div',{style:'font-weight:700;font-size:14px'},c.name+(c.company?' — '+c.company:'')),
+        el('div',{style:'font-family:monospace;color:var(--muted2);font-size:12px;margin-top:2px'},c.phone||'—'),
+        el('div',{style:'display:flex;gap:8px;margin-top:6px;flex-wrap:wrap;align-items:center'},
+          stageBadge(c.pipeline_stage),
+          el('span',{style:'font-size:11px;color:var(--muted2);background:var(--bg4);padding:2px 7px;border-radius:4px'},'👤 '+staff),
+          c.project_value>0?el('span',{style:'font-size:11px;color:#4ade80;background:var(--bg4);padding:2px 7px;border-radius:4px'},fmt(c.project_value)):null
+        ),
+        c.notes?el('div',{style:'color:var(--muted);font-size:11px;margin-top:6px;font-style:italic;padding-top:6px;border-top:1px solid var(--border)'},'📝 '+c.notes.slice(0,100)):null
+      ),
+      el('div',{style:'text-align:right;flex-shrink:0'},
+        el('div',{style:`color:${borderColor};font-size:12px;font-weight:700`},'📅 '+fmtDay(c.next_followup)),
+        daysOverdue>0?el('div',{style:'color:#ef4444;font-size:10px;font-weight:700;margin-top:2px'},daysOverdue+' days overdue!'):null,
+        c.advance_paid>0?el('div',{style:'color:#4ade80;font-size:11px;margin-top:2px'},'Paid: '+fmt(c.advance_paid)):null
+      )
+    ));
+    return card;
+  }
+
+  function renderSection(title, items, renderFn, color, emptyMsg='None') {
+    const sec = el('div',{style:'margin-bottom:20px'});
+    const header = el('div',{style:`display:flex;align-items:center;gap:10px;margin-bottom:10px;padding:10px 14px;background:${color}11;border-radius:8px;border-left:4px solid ${color}`});
+    header.appendChild(el('span',{style:`color:${color};font-weight:800;font-size:14px`},title));
+    header.appendChild(el('span',{style:`background:${color};color:#fff;border-radius:999px;padding:2px 10px;font-size:12px;font-weight:800`},String(items.length)));
+    sec.appendChild(header);
+    if(!items.length){sec.appendChild(el('div',{style:'color:var(--muted);font-size:13px;padding:12px 16px;background:var(--bg3);border-radius:8px;border:1px solid var(--border)'},'✅ '+emptyMsg));return sec;}
+    items.forEach(item=>sec.appendChild(renderFn(item)));
+    return sec;
+  }
+
+  function renderSections() {
+    sectionsDiv.innerHTML = '';
+
+    // Apply staff filter
+    const fLeads = staffFilter==='all' ? leads : leads.filter(l=>String(l.assigned_to)===staffFilter);
+    const fClients = staffFilter==='all' ? clients : clients.filter(c=>String(c.assigned_to)===staffFilter);
+
+    const oLeads = fLeads.filter(l=>l.callback_date&&l.callback_date<today);
+    const tLeads = fLeads.filter(l=>l.callback_date===today);
+    const tmrLeads = fLeads.filter(l=>l.callback_date===tomorrowStr);
+    const n7Leads = fLeads.filter(l=>l.callback_date&&l.callback_date>today&&l.callback_date<=next7Str);
+    const futLeads = fLeads.filter(l=>l.callback_date&&l.callback_date>next7Str);
+    const oClients = fClients.filter(c=>c.next_followup&&c.next_followup<today&&!['completed','lost'].includes(c.pipeline_stage));
+    const tClients = fClients.filter(c=>c.next_followup===today&&!['completed','lost'].includes(c.pipeline_stage));
+    const tmrClients = fClients.filter(c=>c.next_followup===tomorrowStr&&!['completed','lost'].includes(c.pipeline_stage));
+    const upClients = fClients.filter(c=>c.next_followup&&c.next_followup>today&&!['completed','lost'].includes(c.pipeline_stage));
+
+    // LEAD CALLBACKS
+    sectionsDiv.appendChild(el('div',{style:'font-size:13px;font-weight:800;color:var(--text);text-transform:uppercase;letter-spacing:1px;margin-bottom:12px;padding-bottom:8px;border-bottom:2px solid var(--border)'},'📞 LEAD CALLBACKS'));
+    sectionsDiv.appendChild(renderSection('🔴 Overdue Callbacks', oLeads, l=>renderLeadCard(l,'#ef4444'), '#ef4444', 'No overdue callbacks!'));
+    sectionsDiv.appendChild(renderSection('🟡 Todays Callbacks', tLeads, l=>renderLeadCard(l,'#fbbf24'), '#fbbf24', 'No callbacks scheduled for today'));
+    sectionsDiv.appendChild(renderSection('🕐 Tomorrows Callbacks', tmrLeads, l=>renderLeadCard(l,'#fb923c'), '#fb923c', 'No callbacks for tomorrow'));
+    sectionsDiv.appendChild(renderSection('📅 Next 7 Days', n7Leads, l=>renderLeadCard(l,'#8b5cf6'), '#8b5cf6', 'No callbacks in next 7 days'));
+    if(futLeads.length) sectionsDiv.appendChild(renderSection('🗓️ Future Callbacks', futLeads.slice(0,20), l=>renderLeadCard(l,'#06b6d4'), '#06b6d4', ''));
+
+    // CLIENT FOLLOW-UPS
+    sectionsDiv.appendChild(el('div',{style:'font-size:13px;font-weight:800;color:var(--text);text-transform:uppercase;letter-spacing:1px;margin:20px 0 12px;padding-bottom:8px;border-bottom:2px solid var(--border)'},'👥 CLIENT FOLLOW-UPS'));
+    sectionsDiv.appendChild(renderSection('🔴 Overdue Client Follow-ups', oClients, c=>renderClientCard(c,'#ef4444'), '#ef4444', 'No overdue client follow-ups!'));
+    sectionsDiv.appendChild(renderSection('🟡 Todays Client Follow-ups', tClients, c=>renderClientCard(c,'#fbbf24'), '#fbbf24', 'No client follow-ups for today'));
+    sectionsDiv.appendChild(renderSection('🕐 Tomorrows Client Follow-ups', tmrClients, c=>renderClientCard(c,'#fb923c'), '#fb923c', 'No client follow-ups for tomorrow'));
+    sectionsDiv.appendChild(renderSection('🟢 Upcoming Client Follow-ups', upClients.slice(0,30), c=>renderClientCard(c,'#22c55e'), '#22c55e', 'No upcoming client follow-ups'));
+  }
+
+  renderSections();
 }
 
 
