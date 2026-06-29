@@ -226,14 +226,14 @@ function renderApp() {
     {s:'Audits'},{id:'audits',l:'🔍 Audit Reports',i:'audit'},
     {s:'Insights'},{id:'analytics',l:'📈 Analytics',i:'chart'},{id:'staff_performance',l:'👥 Staff Performance',i:'users'},{id:'revenue',l:'💰 Revenue',i:'money'},
     {s:'Campaigns'},{id:'bulk_wa',l:'📢 Bulk WhatsApp',i:'phone'},{id:'wa_campaigns',l:'📊 WA Campaigns',i:'chart'},
-    {s:'Settings'},{id:'team',l:'👥 Team',i:'users'},{id:'password',l:'🔐 Password',i:'check'},
+    {s:'Settings'},{id:'team',l:'👥 Team',i:'users'},{id:'work_schedule',l:'🕐 Work Schedule',i:'check'},{id:'work_logs',l:'📅 Work Logs',i:'chart'},{id:'password',l:'🔐 Password',i:'check'},
   ] : isStaff ? [
     {s:'My Work'},{id:'staff_dash',l:'🏠 Dashboard',i:'dash'},{id:'dialer',l:'📞 Dialer',i:'phone'},
     {s:'Leads'},{id:'my_leads',l:'My Leads',i:'assign'},{id:'followups',l:'🔔 Follow-ups',i:'audit'},
     {s:'Clients'},{id:'my_clients',l:'👥 My Clients',i:'users'},
     {s:'Documents'},{id:'proposals',l:'📄 Proposals',i:'audit'},{id:'invoices',l:'🧾 Invoices',i:'money'},
     {s:'Work'},{id:'tasks',l:'✅ My Tasks',i:'check'},
-    {s:'Stats'},{id:'my_stats',l:'📊 My Stats',i:'chart'},{id:'password',l:'🔐 Password',i:'check'},
+    {s:'Stats'},{id:'my_stats',l:'📊 My Stats',i:'chart'},{id:'my_work',l:'🕐 My Work Log',i:'check'},{id:'password',l:'🔐 Password',i:'check'},
   ] : [
     {s:'Audit'},{id:'audit_dash',l:'Dashboard',i:'dash'},{id:'new_audit',l:'+ New Audit',i:'plus'},{id:'my_audits',l:'My Audits',i:'audit'},
     {s:'Settings'},{id:'password',l:'🔐 Password',i:'check'},
@@ -345,6 +345,8 @@ function renderApp() {
       else if (tab==='admin_followups') await renderAdminFollowups(main);
       else if (tab==='bulk_wa') await renderBulkWA(main);
       else if (tab==='wa_campaigns') await renderWACampaigns(main);
+      else if (tab==='work_schedule') await renderWorkSchedule(main);
+      else if (tab==='work_logs') await renderWorkLogs(main);
       else if (tab==='password') renderPassword(main);
     } else if (isStaff) {
       if (tab==='staff_dash') await renderStaffDash(main);
@@ -356,6 +358,7 @@ function renderApp() {
       else if (tab==='invoices') await renderInvoices(main);
       else if (tab==='tasks') await renderTasks(main);
       else if (tab==='my_stats') await renderMyStats(main);
+      else if (tab==='my_work') await renderMyWork(main);
       else if (tab==='password') renderPassword(main);
     } else {
       if (tab==='audit_dash') await renderAuditDash(main);
@@ -3409,6 +3412,314 @@ async function renderStaffPerformance(container) {
 
     container.appendChild(sCard);
   });
+}
+
+
+boot();
+
+// ── WORK SCHEDULE (Admin) ─────────────────────────────────────────
+async function renderWorkSchedule(container) {
+  container.innerHTML = loading();
+  const [usersR, schedulesR] = await Promise.all([api.get('/users'), api.get('/work/schedules')]);
+  container.innerHTML = '';
+
+  container.appendChild(el('div',{style:'display:flex;justify-content:space-between;align-items:center;margin-bottom:20px'},
+    el('div',{className:'page-title',style:'margin:0'},'🕐 Work Schedule Management'),
+    el('button',{className:'btn btn-ghost btn-sm',onClick:()=>renderWorkSchedule(container)},'🔄 Refresh')
+  ));
+
+  container.appendChild(el('div',{className:'alert alert-info',style:'margin-bottom:16px'},'Set working hours, break times and follow-up reminder settings for each staff member.'));
+
+  const users = usersR.ok ? usersR.data.filter(u=>u.role==='staff') : [];
+  const schedules = schedulesR.ok ? schedulesR.data : [];
+  const mDiv = el('div',{});
+  container.appendChild(mDiv);
+
+  if(!users.length){
+    container.appendChild(el('div',{className:'card',style:'text-align:center;padding:40px;color:var(--muted)'},'No staff members found. Add staff first.'));
+    return;
+  }
+
+  const DAYS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+
+  users.forEach(u=>{
+    const sched = schedules.find(s=>s.User&&s.User.id===u.id) || { work_start:'09:00', work_end:'18:00', work_days:[1,2,3,4,5,6], break_start:'13:00', break_end:'14:00', followup_reminder_mins:30 };
+    const rc = u.avatar_color||'#6366f1';
+    const card = el('div',{className:'card',style:'margin-bottom:16px'});
+
+    card.appendChild(el('div',{style:'display:flex;align-items:center;gap:12px;margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid var(--border)'},
+      el('div',{style:`width:40px;height:40px;border-radius:50%;background:${rc}33;border:2px solid ${rc};display:flex;align-items:center;justify-content:center;font-weight:800;color:${rc};font-size:16px`},u.name.charAt(0).toUpperCase()),
+      el('div',{},
+        el('div',{style:'font-weight:700;font-size:15px'},u.name),
+        el('div',{style:'color:var(--muted);font-size:12px'},'@'+u.username+' · Telecaller')
+      )
+    ));
+
+    const startInp = el('input',{type:'time',className:'inp inp-sm',value:sched.work_start||'09:00'});
+    const endInp   = el('input',{type:'time',className:'inp inp-sm',value:sched.work_end||'18:00'});
+    const bStartInp= el('input',{type:'time',className:'inp inp-sm',value:sched.break_start||'13:00'});
+    const bEndInp  = el('input',{type:'time',className:'inp inp-sm',value:sched.break_end||'14:00'});
+    const reminderInp = el('input',{type:'number',className:'inp inp-sm',value:sched.followup_reminder_mins||30,min:5,max:120,style:'width:80px'});
+
+    // Work days checkboxes
+    const workDays = sched.work_days || [1,2,3,4,5,6];
+    const dayChecks = DAYS.map((d,i)=>{
+      const cb = el('input',{type:'checkbox'});
+      cb.checked = workDays.includes(i);
+      return {cb, day:i, label:d};
+    });
+
+    const daysRow = el('div',{style:'display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px'});
+    dayChecks.forEach(({cb,label})=>{
+      daysRow.appendChild(el('label',{style:'display:flex;align-items:center;gap:4px;cursor:pointer;background:var(--bg4);padding:5px 10px;border-radius:6px;font-size:12px;font-weight:600'},cb,label));
+    });
+
+    card.appendChild(el('div',{style:'display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px'},
+      el('div',{className:'field',style:'margin:0'},el('label',{},'Work Start Time'),startInp),
+      el('div',{className:'field',style:'margin:0'},el('label',{},'Work End Time'),endInp)
+    ));
+    card.appendChild(el('div',{style:'display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px'},
+      el('div',{className:'field',style:'margin:0'},el('label',{},'Break Start'),bStartInp),
+      el('div',{className:'field',style:'margin:0'},el('label',{},'Break End'),bEndInp)
+    ));
+    card.appendChild(el('div',{className:'field',style:'margin-bottom:12px'},el('label',{},'Working Days'),daysRow));
+    card.appendChild(el('div',{style:'display:flex;align-items:center;gap:10px;margin-bottom:14px'},
+      el('label',{style:'font-size:12px;color:var(--muted2);font-weight:600'},'Follow-up Reminder (mins before):'),
+      reminderInp
+    ));
+
+    const saveBtn = el('button',{className:'btn btn-primary btn-sm',onClick:async()=>{
+      saveBtn.disabled=true;saveBtn.textContent='Saving...';
+      const selectedDays = dayChecks.filter(({cb})=>cb.checked).map(({day})=>day);
+      const r = await api.post('/work/schedule/'+u.id,{
+        work_start:startInp.value, work_end:endInp.value,
+        break_start:bStartInp.value, break_end:bEndInp.value,
+        work_days:selectedDays, followup_reminder_mins:parseInt(reminderInp.value)||30
+      });
+      saveBtn.disabled=false;saveBtn.textContent='Save Schedule';
+      if(r.ok){mDiv.className='alert alert-success';mDiv.textContent='✅ Schedule saved for '+u.name+'!';}
+      else{mDiv.className='alert alert-error';mDiv.textContent=r.error;}
+    }},'Save Schedule');
+    card.appendChild(saveBtn);
+    container.appendChild(card);
+  });
+}
+
+// ── WORK LOGS (Admin) ─────────────────────────────────────────────
+async function renderWorkLogs(container) {
+  container.innerHTML = loading();
+  const [usersR, logsR] = await Promise.all([api.get('/users'), api.get('/work/logs')]);
+  container.innerHTML = '';
+
+  container.appendChild(el('div',{style:'display:flex;justify-content:space-between;align-items:center;margin-bottom:20px'},
+    el('div',{className:'page-title',style:'margin:0'},'📅 Work Logs & Attendance'),
+    el('button',{className:'btn btn-ghost btn-sm',onClick:()=>renderWorkLogs(container)},'🔄 Refresh')
+  ));
+
+  const users = usersR.ok ? usersR.data.filter(u=>u.role==='staff') : [];
+  const logs = logsR.ok ? logsR.data : [];
+
+  // Today summary
+  const today = new Date().toISOString().slice(0,10);
+  const todayLogs = logs.filter(l=>l.date===today);
+  const presentToday = todayLogs.filter(l=>l.login_at).length;
+  const lateToday = todayLogs.filter(l=>l.status==='late').length;
+  const absentToday = users.length - presentToday;
+
+  const grid = el('div',{style:'display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:12px;margin-bottom:20px'});
+  [{l:'Present Today',v:presentToday,c:'#22c55e'},{l:'Late Today',v:lateToday,c:'#f59e0b'},{l:'Absent Today',v:absentToday,c:'#ef4444'},{l:'Total Staff',v:users.length,c:'#6366f1'}].forEach(k=>{
+    grid.appendChild(el('div',{style:`background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px;border-top:3px solid ${k.c}`},
+      el('div',{style:`font-size:28px;font-weight:900;color:${k.c}`},String(k.v)),
+      el('div',{style:'font-size:11px;color:var(--muted2);text-transform:uppercase;font-weight:600;margin-top:6px'},k.l)
+    ));
+  });
+  container.appendChild(grid);
+
+  // Filters
+  const userSel = el('select',{className:'inp inp-sm'});
+  userSel.appendChild(el('option',{value:''},'All Staff'));
+  users.forEach(u=>userSel.appendChild(el('option',{value:u.id},u.name)));
+  const fromInp = el('input',{type:'date',className:'inp inp-sm',value:new Date(Date.now()-7*24*60*60*1000).toISOString().slice(0,10)});
+  const toInp = el('input',{type:'date',className:'inp inp-sm',value:today});
+  const filterBtn = el('button',{className:'btn btn-primary btn-sm',onClick:async()=>{
+    filterBtn.disabled=true;
+    const params = new URLSearchParams();
+    if(userSel.value) params.set('user_id',userSel.value);
+    if(fromInp.value) params.set('from',fromInp.value);
+    if(toInp.value) params.set('to',toInp.value);
+    const r = await api.get('/work/logs?'+params);
+    filterBtn.disabled=false;
+    renderLogsTable(r.ok?r.data:[]);
+  }},'Filter');
+
+  container.appendChild(el('div',{className:'filters-bar'},
+    el('span',{style:'color:var(--muted);font-size:13px'},'Staff:'),userSel,
+    el('span',{style:'color:var(--muted);font-size:13px'},'From:'),fromInp,
+    el('span',{style:'color:var(--muted);font-size:13px'},'To:'),toInp,
+    filterBtn
+  ));
+
+  const tableArea = el('div',{});
+  container.appendChild(tableArea);
+
+  function renderLogsTable(data) {
+    tableArea.innerHTML = '';
+    if(!data.length){tableArea.appendChild(el('div',{className:'card',style:'text-align:center;padding:30px;color:var(--muted)'},'No work logs found.'));return;}
+    const sColors={present:'#22c55e',late:'#f59e0b',absent:'#ef4444',half_day:'#06b6d4'};
+    const tw = el('div',{className:'table-wrap'},el('table',{},
+      el('thead',{},el('tr',{},...['Staff','Date','Login','Logout','Duration','Status','Notes'].map(h=>el('th',{},h)))),
+      el('tbody',{},...data.map(l=>{
+        const sc = sColors[l.status]||'#94a3b8';
+        const dur = l.duration_mins ? Math.floor(l.duration_mins/60)+'h '+( l.duration_mins%60)+'m' : '—';
+        const loginTime = l.login_at ? new Date(l.login_at).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'}) : '—';
+        const logoutTime = l.logout_at ? new Date(l.logout_at).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'}) : 'Active';
+        return el('tr',{},
+          el('td',{style:'font-weight:600'},l.User?l.User.name:'—'),
+          el('td',{style:'color:var(--muted2)'},l.date),
+          el('td',{style:'color:#22c55e;font-weight:600'},loginTime),
+          el('td',{style:'color:#ef4444'},logoutTime),
+          el('td',{style:'color:#06b6d4;font-weight:600'},dur),
+          el('td',{},el('span',{style:`background:${sc}22;color:${sc};padding:2px 8px;border-radius:4px;font-size:11px;font-weight:700`},l.status.toUpperCase())),
+          el('td',{style:'color:var(--muted);font-size:12px'},l.notes||'—')
+        );
+      }))
+    ));
+    tableArea.appendChild(tw);
+  }
+
+  renderLogsTable(logs);
+}
+
+// ── MY WORK LOG (Staff) ───────────────────────────────────────────
+async function renderMyWork(container) {
+  container.innerHTML = loading();
+  const [todayR, logsR] = await Promise.all([api.get('/work/today'), api.get('/work/my-logs')]);
+  const alertsR = await api.get('/work/followup-alerts');
+  container.innerHTML = '';
+
+  container.appendChild(el('div',{className:'page-title'},'🕐 My Work Log'));
+
+  const today = todayR.ok ? todayR : {log:null, schedule:null};
+  const logs = logsR.ok ? logsR.data : [];
+  const alerts = alertsR.ok ? alertsR : {total:0,overdueCallbacks:0,todayCallbacks:0,overdueFollowups:0,todayFollowups:0};
+  const mDiv = el('div',{});
+  container.appendChild(mDiv);
+
+  // Follow-up alerts
+  if(alerts.total>0){
+    const alertCard = el('div',{style:'background:#1a0a0a;border:1px solid #ef4444;border-radius:12px;padding:16px;margin-bottom:16px'});
+    alertCard.appendChild(el('div',{style:'font-weight:800;color:#f87171;font-size:14px;margin-bottom:10px'},'🔔 You have '+alerts.total+' follow-up alerts!'));
+    const aGrid = el('div',{style:'display:grid;grid-template-columns:1fr 1fr;gap:8px'});
+    [{l:'Overdue Callbacks',v:alerts.overdueCallbacks,c:'#ef4444'},{l:'Today Callbacks',v:alerts.todayCallbacks,c:'#fbbf24'},{l:'Overdue Client F/U',v:alerts.overdueFollowups,c:'#ef4444'},{l:'Client F/U Today',v:alerts.todayFollowups,c:'#fbbf24'}].forEach(k=>{
+      if(k.v>0) aGrid.appendChild(el('div',{style:`background:${k.c}11;border:1px solid ${k.c}33;border-radius:8px;padding:10px;text-align:center`},
+        el('div',{style:`font-size:20px;font-weight:900;color:${k.c}`},String(k.v)),
+        el('div',{style:'font-size:11px;color:var(--muted2)'},k.l)
+      ));
+    });
+    alertCard.appendChild(aGrid);
+    alertCard.appendChild(el('button',{className:'btn btn-danger btn-sm',style:'margin-top:10px',onClick:()=>{STATE.tab='followups';render();}},'View All Follow-ups →'));
+    container.appendChild(alertCard);
+  }
+
+  // Today clock card
+  const clockCard = el('div',{className:'card',style:'margin-bottom:16px'});
+  const log = today.log;
+  const sched = today.schedule;
+
+  clockCard.appendChild(el('div',{className:'card-title'},'⏰ Todays Work Clock'));
+
+  if(sched){
+    clockCard.appendChild(el('div',{style:'color:var(--muted);font-size:12px;margin-bottom:14px'},'Schedule: '+sched.work_start+' – '+sched.work_end+' · Break: '+sched.break_start+' – '+sched.break_end));
+  }
+
+  if(log && log.login_at){
+    const loginTime = new Date(log.login_at).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'});
+    const sColors={present:'#22c55e',late:'#f59e0b',absent:'#ef4444',half_day:'#06b6d4'};
+    const sc = sColors[log.status]||'#94a3b8';
+
+    clockCard.appendChild(el('div',{style:'display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:16px'},
+      el('div',{style:'text-align:center;background:var(--bg4);border-radius:10px;padding:14px'},
+        el('div',{style:'font-size:22px;font-weight:900;color:#22c55e'},loginTime),
+        el('div',{style:'font-size:11px;color:var(--muted);text-transform:uppercase;margin-top:4px'},'Login Time')
+      ),
+      el('div',{style:'text-align:center;background:var(--bg4);border-radius:10px;padding:14px'},
+        el('div',{style:'font-size:22px;font-weight:900;color:#ef4444'},log.logout_at?new Date(log.logout_at).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'}):'Active'),
+        el('div',{style:'font-size:11px;color:var(--muted);text-transform:uppercase;margin-top:4px'},'Logout Time')
+      ),
+      el('div',{style:'text-align:center;background:var(--bg4);border-radius:10px;padding:14px'},
+        el('div',{style:`font-size:22px;font-weight:900;color:${sc}`},log.status.toUpperCase()),
+        el('div',{style:'font-size:11px;color:var(--muted);text-transform:uppercase;margin-top:4px'},'Status')
+      )
+    ));
+
+    if(!log.logout_at){
+      const logoutBtn = el('button',{className:'btn btn-danger',style:'width:100%;justify-content:center',onClick:async()=>{
+        if(!confirm('Log out now?')) return;
+        logoutBtn.disabled=true;logoutBtn.textContent='Logging out...';
+        const r = await api.post('/work/logout',{});
+        if(r.ok){mDiv.className='alert alert-success';mDiv.textContent='✅ Logged out! Duration: '+r.duration_str;renderMyWork(container);}
+        else{mDiv.className='alert alert-error';mDiv.textContent=r.error;logoutBtn.disabled=false;logoutBtn.textContent='Clock Out';}
+      }},'🔴 Clock Out');
+      clockCard.appendChild(logoutBtn);
+    } else {
+      const dur = log.duration_mins ? Math.floor(log.duration_mins/60)+'h '+(log.duration_mins%60)+'m' : '—';
+      clockCard.appendChild(el('div',{style:'text-align:center;padding:14px;background:var(--bg4);border-radius:10px;color:#22c55e;font-weight:700;font-size:16px'},'Total Work Time: '+dur));
+    }
+  } else {
+    clockCard.appendChild(el('div',{style:'text-align:center;padding:20px'},
+      el('div',{style:'font-size:40px;margin-bottom:12px'},'⏰'),
+      el('div',{style:'color:var(--muted);margin-bottom:16px'},'You have not clocked in today yet.'),
+      el('button',{className:'btn btn-success',style:'width:100%;justify-content:center;font-size:15px;padding:12px',onClick:async()=>{
+        const r = await api.post('/work/login',{});
+        if(r.ok){
+          const msg = r.status==='late'?'⚠️ Clocked in LATE!':'✅ Clocked in successfully!';
+          mDiv.className = r.status==='late'?'alert alert-warn':'alert alert-success';
+          mDiv.textContent = msg;
+          renderMyWork(container);
+        } else{mDiv.className='alert alert-error';mDiv.textContent=r.error;}
+      }},'🟢 Clock In')
+    ));
+  }
+  container.appendChild(clockCard);
+
+  // My attendance history
+  if(logs.length){
+    const histCard = el('div',{className:'card'});
+    histCard.appendChild(el('div',{className:'card-title'},'📋 My Attendance History (Last 30 Days)'));
+
+    // Stats
+    const present = logs.filter(l=>l.status==='present').length;
+    const late = logs.filter(l=>l.status==='late').length;
+    const totalDuration = logs.reduce((s,l)=>s+(l.duration_mins||0),0);
+    const avgDuration = logs.length>0?Math.round(totalDuration/logs.length):0;
+
+    const sGrid = el('div',{style:'display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:16px'});
+    [{l:'Days Present',v:present,c:'#22c55e'},{l:'Late Days',v:late,c:'#f59e0b'},{l:'Total Days',v:logs.length,c:'#6366f1'},{l:'Avg Hours',v:Math.floor(avgDuration/60)+'h '+(avgDuration%60)+'m',c:'#06b6d4'}].forEach(k=>{
+      sGrid.appendChild(el('div',{style:`background:var(--bg4);border-radius:8px;padding:10px;text-align:center;border-bottom:2px solid ${k.c}`},
+        el('div',{style:`font-size:18px;font-weight:800;color:${k.c}`},String(k.v)),
+        el('div',{style:'font-size:10px;color:var(--muted);text-transform:uppercase;margin-top:2px'},k.l)
+      ));
+    });
+    histCard.appendChild(sGrid);
+
+    const sColors={present:'#22c55e',late:'#f59e0b',absent:'#ef4444',half_day:'#06b6d4'};
+    const tw = el('div',{className:'table-wrap'},el('table',{},
+      el('thead',{},el('tr',{},...['Date','Login','Logout','Duration','Status'].map(h=>el('th',{},h)))),
+      el('tbody',{},...logs.map(l=>{
+        const sc = sColors[l.status]||'#94a3b8';
+        const dur = l.duration_mins ? Math.floor(l.duration_mins/60)+'h '+(l.duration_mins%60)+'m' : '—';
+        return el('tr',{},
+          el('td',{style:'font-weight:600'},l.date),
+          el('td',{style:'color:#22c55e'},l.login_at?new Date(l.login_at).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'}):'—'),
+          el('td',{style:'color:#ef4444'},l.logout_at?new Date(l.logout_at).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'}):'Active'),
+          el('td',{style:'color:#06b6d4;font-weight:600'},dur),
+          el('td',{},el('span',{style:`background:${sc}22;color:${sc};padding:2px 8px;border-radius:4px;font-size:11px;font-weight:700`},l.status.toUpperCase()))
+        );
+      }))
+    ));
+    histCard.appendChild(tw);
+    container.appendChild(histCard);
+  }
 }
 
 
