@@ -299,20 +299,6 @@ router.put('/leads/:id', apiAuth, async (req, res) => {
   } catch (e) { res.json({ ok: false, error: e.message }); }
 });
 
-router.delete('/leads/:id', apiAdmin, async (req, res) => {
-  await Lead.destroy({ where: { id: req.params.id } });
-  res.json({ ok: true });
-});
-
-router.post('/leads/assign', apiAdmin, async (req, res) => {
-  try {
-    const { lead_ids, staff_id } = req.body;
-    if (!lead_ids?.length) return res.json({ ok: false, error: 'No leads selected' });
-    await Lead.update({ assigned_to: parseInt(staff_id) }, { where: { id: { [Op.in]: lead_ids } } });
-    res.json({ ok: true, count: lead_ids.length });
-  } catch (e) { res.json({ ok: false, error: e.message }); }
-});
-
 router.delete('/leads/bulk', apiAdmin, async (req, res) => {
   try {
     const { lead_ids, filter_assigned, filter_source, filter_date } = req.body;
@@ -329,14 +315,25 @@ router.delete('/leads/bulk', apiAdmin, async (req, res) => {
     } else if (filter_date) {
       where[Op.and] = [sequelize.where(sequelize.fn('DATE', sequelize.col('createdAt')), filter_date)];
     }
-    // Allow empty where to delete all if explicitly requested
-    if (!Object.keys(where).length) {
-      // Delete all leads - no filter needed
-    }
     const count = await Lead.destroy({ where });
     res.json({ ok: true, count });
   } catch (e) { res.json({ ok: false, error: e.message }); }
 });
+
+router.delete('/leads/:id', apiAdmin, async (req, res) => {
+  await Lead.destroy({ where: { id: req.params.id } });
+  res.json({ ok: true });
+});
+
+router.post('/leads/assign', apiAdmin, async (req, res) => {
+  try {
+    const { lead_ids, staff_id } = req.body;
+    if (!lead_ids?.length) return res.json({ ok: false, error: 'No leads selected' });
+    await Lead.update({ assigned_to: parseInt(staff_id) }, { where: { id: { [Op.in]: lead_ids } } });
+    res.json({ ok: true, count: lead_ids.length });
+  } catch (e) { res.json({ ok: false, error: e.message }); }
+});
+
 
 router.post('/leads/:id/log', apiAuth, async (req, res) => {
   try {
