@@ -374,27 +374,54 @@ function renderApp() {
 // ── ADMIN DASHBOARD ──────────────────────────────────────────────
 async function renderDashboard(container) {
   container.innerHTML = loading();
-  const [r, analyticsR] = await Promise.all([api.get('/dashboard/overview'), api.get('/analytics/full')]);
+  const [r, analyticsR, workLogsR, alertsAdminR] = await Promise.all([
+    api.get('/dashboard/overview'),
+    api.get('/analytics/full'),
+    api.get('/work/logs?from='+new Date().toISOString().slice(0,10)),
+    api.get('/leads/callbacks-due'),
+  ]);
   container.innerHTML = '';
   if (!r.ok) { container.appendChild(alertEl('error','Failed to load dashboard')); return; }
 
-  // Header
   const now = new Date();
   const dateStr = now.toLocaleDateString('en-IN',{weekday:'long',year:'numeric',month:'long',day:'numeric'});
-  container.appendChild(el('div',{style:'display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:24px;flex-wrap:wrap;gap:10px'},
+  const today = now.toISOString().slice(0,10);
+
+  // ── HEADER ──────────────────────────────────────────────────────
+  container.appendChild(el('div',{style:'display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px;flex-wrap:wrap;gap:10px'},
     el('div',{},
       el('div',{className:'page-title',style:'margin-bottom:4px'},'Command Center'),
       el('div',{style:'color:var(--muted);font-size:13px'},dateStr)
     ),
     el('div',{style:'display:flex;gap:8px;flex-wrap:wrap'},
-      el('button',{className:'btn btn-primary btn-sm',onClick:()=>{STATE.tab='assign_leads';render();}},'+ Assign Leads'),
-      el('button',{className:'btn btn-ghost btn-sm',onClick:()=>{STATE.tab='clients';render();}},'+ Add Client'),
-      el('button',{className:'btn btn-ghost btn-sm',onClick:()=>renderDashboard(container)},'🔄 Refresh')
+      el('button',{className:'btn btn-primary btn-sm',onClick:()=>{STATE.tab='import';render();}},'📤 Import Leads'),
+      el('button',{className:'btn btn-cyan btn-sm',onClick:()=>{STATE.tab='assign_leads';render();}},'👥 Assign Leads'),
+      el('button',{className:'btn btn-success btn-sm',onClick:()=>{STATE.tab='clients';render();}},'+ Add Client'),
+      el('button',{className:'btn btn-ghost btn-sm',onClick:()=>{STATE.tab='admin_followups';render();}},'🔔 Follow-ups'),
+      el('button',{className:'btn btn-ghost btn-sm',onClick:()=>renderDashboard(container)},'🔄 Refresh'),
+      el('button',{className:'btn btn-success btn-sm',onClick:async()=>{
+        if(!confirm('Send WhatsApp reminders to all staff for todays callbacks, tasks and follow-ups?')) return;
+        const r2 = await api.post('/notifications/send-reminders',{});
+        if(r2.ok) showToast('✅ '+r2.message,'success');
+        else showToast('❌ '+r2.error,'error');
+      }},'📱 Send WA Reminders')
     )
   ));
 
-  // KPI GRID
-  const kpiRow = el('div',{style:'display:grid;grid-template-columns:repeat(auto-fill,minmax(155px,1fr));gap:14px;margin-bottom:24px'});
+  // ── CALLBACK ALERT BAR ──────────────────────────────────────────
+  const callbackCount = alertsAdminR.ok ? alertsAdminR.data?.length : 0;
+  if(callbackCount>0){
+    container.appendChild(el('div',{style:'background:#1a0505;border:1px solid #ef4444;border-radius:10px;padding:12px 16px;margin-bottom:16px;display:flex;justify-content:space-between;align-items:center',onClick:()=>{STATE.tab='admin_followups';render();}},
+      el('div',{style:'display:flex;align-items:center;gap:10px'},
+        el('span',{style:'font-size:20px'},'🔔'),
+        el('span',{style:'color:#f87171;font-weight:700;font-size:14px'},callbackCount+' callbacks are due today! Click to view →')
+      ),
+      el('span',{style:'background:#ef4444;color:#fff;border-radius:999px;padding:4px 14px;font-weight:800;font-size:14px'},String(callbackCount))
+    ));
+  }
+
+  // ── 12 KPI CARDS ────────────────────────────────────────────────
+  const kpiRow = el('div',{style:'display:grid;grid-template-columns:repeat(auto-fill,minmax(155px,1fr));gap:14px;margin-bottom:20px'});
   [
     {l:'Total Leads',v:r.totalLeads,s:'Today: +'+r.todayLeads,c:'#6366f1',icon:'📋'},
     {l:'Assigned Leads',v:r.assigned,s:Math.round((r.assigned/(r.totalLeads||1))*100)+'% assigned',c:'#818cf8',icon:'✅'},
@@ -402,15 +429,15 @@ async function renderDashboard(container) {
     {l:'Today Calls',v:r.todayCalls,s:'Today only',c:'#3b82f6',icon:'📞'},
     {l:'Week Calls',v:r.weekCalls,s:'Last 7 days',c:'#06b6d4',icon:'📅'},
     {l:'Total Calls',v:r.totalCalls,s:'All time',c:'#8b5cf6',icon:'☎️'},
-    {l:'Total Revenue',v:fmt(r.totalRevenue),s:'All time collected',c:'#22c55e',icon:'💰'},
-    {l:'Month Revenue',v:fmt(r.monthRevenue),s:'This month paid',c:'#4ade80',icon:'📈'},
+    {l:'Total Revenue',v:fmt(r.totalRevenue),s:'All time',c:'#22c55e',icon:'💰'},
+    {l:'Month Revenue',v:fmt(r.monthRevenue),s:'This month',c:'#4ade80',icon:'📈'},
     {l:'Active Clients',v:r.activeClients,s:'Total: '+r.totalClients,c:'#06b6d4',icon:'👥'},
     {l:'Pending Tasks',v:r.pendingTasks,s:'Overdue: '+r.overdueTasks,c:r.overdueTasks>0?'#ef4444':'#8b5cf6',icon:'📝'},
     {l:'Proposals',v:r.totalProposals,s:'Accepted: '+r.acceptedProposals,c:'#a78bfa',icon:'📄'},
     {l:'Pending Invoices',v:fmt(r.pendingInvValue),s:r.pendingInvCount+' invoices',c:'#fb923c',icon:'🧾'},
   ].forEach(k=>{
-    const card = el('div',{style:`background:var(--bg3);border:1px solid var(--border);border-radius:14px;padding:18px;border-top:3px solid ${k.c};transition:all 0.2s;position:relative;overflow:hidden`});
-    card.addEventListener('mouseenter',()=>{card.style.transform='translateY(-2px)';card.style.boxShadow=`0 8px 25px ${k.c}22`;});
+    const card = el('div',{style:`background:var(--bg3);border:1px solid var(--border);border-radius:14px;padding:16px;border-top:3px solid ${k.c};transition:all 0.2s;cursor:default`});
+    card.addEventListener('mouseenter',()=>{card.style.transform='translateY(-2px)';card.style.boxShadow=`0 8px 20px ${k.c}22`;});
     card.addEventListener('mouseleave',()=>{card.style.transform='';card.style.boxShadow='';});
     card.appendChild(el('div',{style:'display:flex;justify-content:space-between;align-items:flex-start'},
       el('div',{style:`font-size:${typeof k.v==='string'&&k.v.length>6?'16px':'26px'};font-weight:900;color:${k.c};letter-spacing:-1px;line-height:1`},String(k.v)),
@@ -422,7 +449,7 @@ async function renderDashboard(container) {
   });
   container.appendChild(kpiRow);
 
-  // CHARTS ROW
+  // ── CHARTS ROW ──────────────────────────────────────────────────
   const chartsRow = el('div',{style:'display:grid;grid-template-columns:1.6fr 1fr;gap:16px;margin-bottom:20px'});
   const revChartCard = el('div',{className:'card'});
   revChartCard.appendChild(el('div',{className:'card-title'},'📊 Revenue Trend — Last 6 Months'));
@@ -441,16 +468,88 @@ async function renderDashboard(container) {
   chartsRow.appendChild(donutCard);
   container.appendChild(chartsRow);
 
+  // ── CONVERSION FUNNEL ────────────────────────────────────────────
+  const funnelCard = el('div',{className:'card',style:'margin-bottom:20px'});
+  funnelCard.appendChild(el('div',{className:'card-title'},'🔽 Conversion Funnel'));
+  const total = r.totalLeads||1;
+  const funnelSteps = [
+    {l:'Total Leads',v:r.totalLeads||0,c:'#6366f1'},
+    {l:'Assigned',v:r.assigned||0,c:'#3b82f6'},
+    {l:'Called',v:r.totalCalls||0,c:'#06b6d4'},
+    {l:'Interested',v:r.staffStats?r.staffStats.reduce((s,x)=>s+(x.interested||0),0):0,c:'#22c55e'},
+    {l:'Converted',v:r.totalClients||0,c:'#4ade80'},
+  ];
+  funnelSteps.forEach((step,i)=>{
+    const pct = Math.round((step.v/total)*100);
+    const width = Math.max(20, pct);
+    funnelCard.appendChild(el('div',{style:'display:flex;align-items:center;gap:12px;margin-bottom:10px'},
+      el('div',{style:'width:120px;font-size:12px;color:var(--muted2);font-weight:600;text-align:right;flex-shrink:0'},step.l),
+      el('div',{style:'flex:1'},
+        el('div',{style:`width:${width}%;background:${step.c};height:28px;border-radius:6px;display:flex;align-items:center;padding:0 10px;transition:width 0.5s;min-width:60px`},
+          el('span',{style:'color:#fff;font-size:12px;font-weight:700;white-space:nowrap'},String(step.v))
+        )
+      ),
+      el('div',{style:`color:${step.c};font-weight:800;font-size:13px;width:50px;text-align:right`},pct+'%')
+    ));
+  });
+  container.appendChild(funnelCard);
+
+  // ── TODAY WORK STATUS ────────────────────────────────────────────
+  const todayLogs = workLogsR.ok ? (workLogsR.data||[]) : [];
+  if(r.staffStats && r.staffStats.length) {
+    const workCard = el('div',{className:'card',style:'margin-bottom:20px'});
+    workCard.appendChild(el('div',{style:'display:flex;justify-content:space-between;align-items:center;margin-bottom:14px'},
+      el('div',{className:'card-title',style:'margin:0'},'🕐 Today Work Status'),
+      el('div',{style:'display:flex;gap:8px'},
+        el('span',{style:'background:#22c55e22;color:#22c55e;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:700'},
+          todayLogs.filter(l=>l.login_at).length+' Clocked In'),
+        el('span',{style:'background:#ef4444;color:#ef4444;background:rgba(239,68,68,0.12);padding:3px 10px;border-radius:999px;font-size:12px;font-weight:700'},
+          (r.staffStats.length - todayLogs.filter(l=>l.login_at).length)+' Absent')
+      )
+    ));
+
+    // TODAY LIVE CALL SCOREBOARD
+    workCard.appendChild(el('div',{style:'font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:10px'},'📞 Todays Call Scoreboard'));
+    const scoreboardRow = el('div',{style:'display:flex;flex-direction:column;gap:8px'});
+
+    const sortedStaff = [...r.staffStats].sort((a,b)=>(b.todayCalls||0)-(a.todayCalls||0));
+    sortedStaff.forEach((s,i)=>{
+      const log = todayLogs.find(l=>l.User&&l.User.id===s.id);
+      const isOnline = log && log.login_at && !log.logout_at;
+      const loginTime = log?.login_at ? new Date(log.login_at).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'}) : null;
+      const pct = s.daily_target>0?Math.min(100,Math.round(((s.todayCalls||0)/s.daily_target)*100)):0;
+      const pColor = pct>=100?'#22c55e':pct>=60?'#f59e0b':'#6366f1';
+
+      scoreboardRow.appendChild(el('div',{style:'display:flex;align-items:center;gap:12px;padding:10px;background:var(--bg4);border-radius:10px'},
+        el('div',{style:'font-size:16px;width:24px;text-align:center'},['🥇','🥈','🥉'][i]||(i+1)+'.'),
+        el('div',{style:`width:34px;height:34px;border-radius:50%;background:${s.avatar_color||'#6366f1'}33;border:2px solid ${s.avatar_color||'#6366f1'};display:flex;align-items:center;justify-content:center;font-weight:800;color:${s.avatar_color||'#6366f1'};font-size:14px;flex-shrink:0`},s.name.charAt(0).toUpperCase()),
+        el('div',{style:'flex:1'},
+          el('div',{style:'display:flex;align-items:center;gap:8px;margin-bottom:4px'},
+            el('span',{style:'font-weight:700;font-size:13px'},s.name),
+            isOnline?el('span',{style:'background:#22c55e;width:8px;height:8px;border-radius:50%;display:inline-block'}):el('span',{style:'background:#6b7280;width:8px;height:8px;border-radius:50%;display:inline-block'}),
+            loginTime?el('span',{style:'font-size:11px;color:var(--muted)'},'In: '+loginTime):el('span',{style:'font-size:11px;color:#ef4444'},'Not clocked in')
+          ),
+          el('div',{style:'background:var(--bg);border-radius:999px;height:7px;overflow:hidden'},
+            el('div',{style:`width:${pct}%;background:${pColor};height:100%;border-radius:999px;transition:width 0.5s`})
+          )
+        ),
+        el('div',{style:'text-align:right;flex-shrink:0'},
+          el('div',{style:`font-size:18px;font-weight:900;color:${pColor}`},String(s.todayCalls||0)),
+          el('div',{style:'font-size:10px;color:var(--muted)'},'/'+s.daily_target+' target'),
+          el('div',{style:`font-size:11px;font-weight:700;color:${pColor}`},pct+'%')
+        )
+      ));
+    });
+    workCard.appendChild(scoreboardRow);
+    container.appendChild(workCard);
+  }
+
+  // ── DRAW CHARTS ─────────────────────────────────────────────────
   requestAnimationFrame(()=>{
     const monthlyData = analyticsR.ok ? (analyticsR.monthlyRevenue||[]) : [];
     drawBarChart(revCanvas, monthlyData.map(m=>m.month), monthlyData.map(m=>m.revenue), '#6366f1', '#4ade80');
     const statusCounts = {};
-    if(r.staffStats) r.staffStats.forEach(s=>{
-      statusCounts.pending=(statusCounts.pending||0)+s.pending;
-      statusCounts.called=(statusCounts.called||0)+s.called;
-      statusCounts.interested=(statusCounts.interested||0)+s.interested;
-      statusCounts.not_interested=(statusCounts.not_interested||0)+s.not_interested;
-    });
+    if(r.staffStats) r.staffStats.forEach(s=>{ statusCounts.pending=(statusCounts.pending||0)+s.pending; statusCounts.called=(statusCounts.called||0)+s.called; statusCounts.interested=(statusCounts.interested||0)+s.interested; statusCounts.not_interested=(statusCounts.not_interested||0)+s.not_interested; });
     const donutData = [
       {l:'Interested',v:statusCounts.interested||0,c:'#22c55e'},
       {l:'Called',v:statusCounts.called||0,c:'#3b82f6'},
@@ -467,25 +566,24 @@ async function renderDashboard(container) {
     });
   });
 
-  // STAFF PERFORMANCE FULL SECTION
+  // ── STAFF PERFORMANCE TABLE ──────────────────────────────────────
   const staffCard = el('div',{className:'card',style:'margin-bottom:16px'});
   staffCard.appendChild(el('div',{style:'display:flex;justify-content:space-between;align-items:center;margin-bottom:16px'},
     el('div',{className:'card-title',style:'margin:0'},'👥 Staff Performance & Lead Assignment'),
     el('div',{style:'display:flex;gap:8px'},
       el('button',{className:'btn btn-primary btn-sm',onClick:()=>{STATE.tab='assign_leads';render();}},'+ Assign Leads'),
-      el('button',{className:'btn btn-ghost btn-sm',onClick:()=>{STATE.tab='team';render();}},'Manage Team')
+      el('button',{className:'btn btn-ghost btn-sm',onClick:()=>{STATE.tab='staff_performance';render();}},'Full Report →')
     )
   ));
 
-  // Assignment progress bar
-  const assignPct = r.totalLeads>0 ? Math.round((r.assigned/r.totalLeads)*100) : 0;
+  const assignPct = r.totalLeads>0?Math.round((r.assigned/r.totalLeads)*100):0;
   staffCard.appendChild(el('div',{style:'margin-bottom:16px;background:var(--bg4);border-radius:10px;padding:14px'},
     el('div',{style:'display:flex;justify-content:space-between;font-size:12px;margin-bottom:8px'},
       el('div',{style:'font-weight:600;color:var(--text2)'},'Lead Assignment Progress'),
       el('span',{style:'color:#6366f1;font-weight:800;font-size:14px'},assignPct+'%')
     ),
     el('div',{style:'background:var(--bg);border-radius:999px;height:10px;overflow:hidden;margin-bottom:8px'},
-      el('div',{style:`width:${assignPct}%;background:linear-gradient(90deg,#6366f1,#22c55e);height:100%;border-radius:999px;transition:width 1s ease`})
+      el('div',{style:`width:${assignPct}%;background:linear-gradient(90deg,#6366f1,#22c55e);height:100%;border-radius:999px`})
     ),
     el('div',{style:'display:flex;gap:20px;font-size:12px'},
       el('span',{style:'color:#22c55e;font-weight:600'},'✓ Assigned: '+r.assigned),
@@ -495,27 +593,21 @@ async function renderDashboard(container) {
   ));
 
   if(r.staffStats && r.staffStats.length) {
-    // Staff performance bars chart
-    const perfCanvas = document.createElement('canvas');
-    perfCanvas.style.cssText='width:100%;height:160px;display:block;margin-bottom:16px';
-    staffCard.appendChild(perfCanvas);
-
-    // Full staff table
-    const medals=['🥇','🥈','🥉'];
     const tw = el('div',{style:'overflow-x:auto'});
     const tbl = el('table',{style:'width:100%;border-collapse:collapse;font-size:12px'});
     tbl.appendChild(el('thead',{},el('tr',{style:'background:var(--bg4)'},
-      ...['','Staff','Leads','Pending','Called','Interested','Not Int.','Conv%','Today','Month Calls','Revenue','Progress'].map(h=>
+      ...['','Staff','Leads','Pending','Called','Interested','Conv%','Today','Month Calls','Revenue','Progress'].map(h=>
         el('th',{style:'padding:8px 10px;text-align:left;color:var(--muted);font-size:10px;font-weight:700;text-transform:uppercase;white-space:nowrap'},h)
       )
     )));
     const tbody = el('tbody',{});
+    const medals=['🥇','🥈','🥉'];
     r.staffStats.forEach((s,i)=>{
       const cr=parseFloat(s.convRate||0);
       const crColor=cr>=15?'#22c55e':cr>=8?'#f59e0b':'#ef4444';
-      const completion = s.total>0?Math.round(((s.total-s.pending)/s.total)*100):0;
+      const completion=s.total>0?Math.round(((s.total-s.pending)/s.total)*100):0;
       tbody.appendChild(el('tr',{style:'cursor:pointer;border-top:1px solid var(--border)',onClick:()=>openStaffLeadsModal(s)},
-        el('td',{style:'padding:8px 10px;font-size:16px'},medals[i]||'#'+(i+1)),
+        el('td',{style:'padding:8px 10px;font-size:16px'},medals[i]||''),
         el('td',{style:'padding:8px 10px'},
           el('div',{style:'display:flex;align-items:center;gap:8px'},
             el('div',{style:`width:28px;height:28px;border-radius:50%;background:${s.avatar_color||'#6366f1'}33;border:2px solid ${s.avatar_color||'#6366f1'};display:flex;align-items:center;justify-content:center;font-weight:800;color:${s.avatar_color||'#6366f1'};font-size:12px`},s.name.charAt(0).toUpperCase()),
@@ -526,14 +618,13 @@ async function renderDashboard(container) {
         el('td',{style:'padding:8px 10px;color:#f59e0b'},String(s.pending||0)),
         el('td',{style:'padding:8px 10px;color:#3b82f6'},String(s.called||0)),
         el('td',{style:'padding:8px 10px;color:#22c55e;font-weight:700'},String(s.interested||0)),
-        el('td',{style:'padding:8px 10px;color:#ef4444'},String(s.not_interested||0)),
-        el('td',{style:`padding:8px 10px;font-weight:800;font-size:13px;color:${crColor}`},String(s.convRate||0)+'%'),
+        el('td',{style:`padding:8px 10px;font-weight:800;font-size:13px;color:${crColor}`},String(cr)+'%'),
         el('td',{style:'padding:8px 10px;color:var(--muted2)'},String(s.todayCalls||0)+'/'+String(s.daily_target||50)),
         el('td',{style:'padding:8px 10px;color:#06b6d4;font-weight:600'},String(s.monthCalls||0)),
         el('td',{style:'padding:8px 10px;color:#4ade80;font-weight:600'},fmt(s.revenue||0)),
         el('td',{style:'padding:8px 10px'},
           el('div',{style:'background:var(--bg);border-radius:999px;height:6px;width:80px;overflow:hidden'},
-            el('div',{style:`width:${completion}%;background:linear-gradient(90deg,#6366f1,#22c55e);height:100%;border-radius:999px`})
+            el('div',{style:`width:${completion}%;background:#6366f1;height:100%;border-radius:999px`})
           ),
           el('div',{style:'color:var(--muted);font-size:10px;margin-top:2px'},completion+'%')
         )
@@ -542,36 +633,28 @@ async function renderDashboard(container) {
     tbl.appendChild(tbody);
     tw.appendChild(tbl);
     staffCard.appendChild(tw);
-    staffCard.appendChild(el('p',{style:'color:var(--muted);font-size:11px;margin-top:8px'},'💡 Click any row to see that staff member\'s leads'));
-
-    // Draw staff performance bar chart
-    requestAnimationFrame(()=>{
-      const names = r.staffStats.map(s=>s.name.split(' ')[0]);
-      const calls = r.staffStats.map(s=>s.monthCalls||0);
-      const convRates = r.staffStats.map(s=>parseFloat(s.convRate||0));
-      drawBarChart(perfCanvas, names, calls, '#6366f1', '#06b6d4');
-    });
+    staffCard.appendChild(el('p',{style:'color:var(--muted);font-size:11px;margin-top:8px'},'💡 Click any row to see that staff members leads'));
   } else {
     staffCard.appendChild(el('div',{style:'text-align:center;padding:30px'},
       el('div',{style:'font-size:32px;margin-bottom:10px'},'👥'),
-      el('div',{style:'color:var(--muted);font-size:14px;margin-bottom:12px'},'No staff members yet. Add your team to start assigning leads.'),
+      el('div',{style:'color:var(--muted);font-size:14px;margin-bottom:12px'},'No staff members yet.'),
       el('button',{className:'btn btn-primary',onClick:()=>{STATE.tab='team';render();}},'+ Add Team Members')
     ));
   }
   container.appendChild(staffCard);
 
-  // HOT LEADS
+  // ── HOT LEADS ───────────────────────────────────────────────────
   if(r.hotLeads && r.hotLeads.length) {
     const hlCard = el('div',{className:'card',style:'margin-bottom:16px'});
     hlCard.appendChild(el('div',{style:'display:flex;justify-content:space-between;align-items:center;margin-bottom:12px'},
-      el('div',{className:'card-title',style:'margin:0'},'🔥 Hot Leads'),
+      el('div',{className:'card-title',style:'margin:0'},'🔥 Hot Leads — Priority Callbacks'),
       el('button',{className:'btn btn-ghost btn-sm',onClick:()=>{STATE.tab='all_leads';render();}},'View All →')
     ));
     r.hotLeads.forEach(l=>{
       const score=l.lead_score||0;
       const sc=score>=70?'#22c55e':score>=50?'#f59e0b':'#fb923c';
       hlCard.appendChild(el('div',{style:'display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid var(--border)'},
-        el('div',{style:`background:${sc}22;color:${sc};border-radius:8px;padding:4px 8px;font-weight:800;font-size:13px;min-width:40px;text-align:center`},score),
+        el('div',{style:`background:${sc}22;color:${sc};border-radius:8px;padding:4px 8px;font-weight:800;font-size:13px;min-width:40px;text-align:center`},String(score)),
         el('div',{style:'flex:1'},
           el('div',{style:'font-weight:600;font-size:13px'},l.name||'Unknown'),
           el('div',{style:'font-size:11px;color:var(--muted2)'},l.phone+' · '+catLabel(l.category))
@@ -585,17 +668,17 @@ async function renderDashboard(container) {
     container.appendChild(hlCard);
   }
 
-  // PIPELINE SUMMARY
+  // ── PIPELINE STATUS ──────────────────────────────────────────────
   if(r.pipelineByStage && r.pipelineByStage.length) {
     const pCard = el('div',{className:'card',style:'margin-bottom:16px'});
     pCard.appendChild(el('div',{style:'display:flex;justify-content:space-between;align-items:center;margin-bottom:12px'},
       el('div',{className:'card-title',style:'margin:0'},'📊 Pipeline Status'),
       el('button',{className:'btn btn-ghost btn-sm',onClick:()=>{STATE.tab='kanban';render();}},'Kanban View →')
     ));
-    const byStage = Object.fromEntries(r.pipelineByStage.map(x=>[x.pipeline_stage,{cnt:parseInt(x.cnt),val:parseFloat(x.val||0)}]));
-    const pRow = el('div',{style:'display:flex;gap:8px;overflow-x:auto;padding-bottom:8px'});
+    const byStage=Object.fromEntries(r.pipelineByStage.map(x=>[x.pipeline_stage,{cnt:parseInt(x.cnt),val:parseFloat(x.val||0)}]));
+    const pRow=el('div',{style:'display:flex;gap:8px;overflow-x:auto;padding-bottom:8px'});
     PIPELINE_STAGES.forEach(s=>{
-      if(!byStage[s.value]) return;
+      if(!byStage[s.value])return;
       pRow.appendChild(el('div',{style:`flex-shrink:0;background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:10px 14px;border-top:2px solid ${s.color};cursor:pointer;min-width:110px`,onClick:()=>{STATE.tab='kanban';render();}},
         el('div',{style:`font-size:22px;font-weight:800;color:${s.color}`},String(byStage[s.value].cnt)),
         el('div',{style:'font-size:11px;color:var(--muted);margin-top:2px;white-space:nowrap'},s.label),
@@ -606,12 +689,12 @@ async function renderDashboard(container) {
     container.appendChild(pCard);
   }
 
-  // OVERDUE FOLLOWUPS
+  // ── OVERDUE FOLLOWUPS ────────────────────────────────────────────
   if(r.overduefollowups && r.overduefollowups.length) {
-    const fCard = el('div',{className:'card',style:'margin-bottom:16px'});
+    const fCard=el('div',{className:'card',style:'margin-bottom:16px'});
     fCard.appendChild(el('div',{style:'display:flex;justify-content:space-between;align-items:center;margin-bottom:12px'},
       el('div',{className:'card-title',style:'margin:0'},'⚠️ '+r.overduefollowups.length+' Overdue Follow-ups'),
-      el('button',{className:'btn btn-ghost btn-sm',onClick:()=>{STATE.tab='clients';render();}},'View All →')
+      el('button',{className:'btn btn-danger btn-sm',onClick:()=>{STATE.tab='admin_followups';render();}},'View All →')
     ));
     r.overduefollowups.slice(0,6).forEach(c=>{
       fCard.appendChild(el('div',{style:'display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)'},
@@ -622,9 +705,9 @@ async function renderDashboard(container) {
     container.appendChild(fCard);
   }
 
-  // RECENT ACTIVITY
+  // ── RECENT ACTIVITY ──────────────────────────────────────────────
   if(r.recentActivities && r.recentActivities.length) {
-    const aCard = el('div',{className:'card'});
+    const aCard=el('div',{className:'card'});
     aCard.appendChild(el('div',{className:'card-title'},'🕐 Recent Activity'));
     r.recentActivities.slice(0,8).forEach(a=>{
       const act=ACT_MAP[a.type]||{label:a.type,color:'#94a3b8'};
@@ -647,6 +730,7 @@ async function renderDashboard(container) {
     else clearInterval(STATE._dashRefresh);
   }, 60000);
 }
+
 
 // ── STAFF DASHBOARD ──────────────────────────────────────────────
 async function renderStaffDash(container) {
@@ -1777,6 +1861,7 @@ function openAddUserModal(onSave) {
   const nameInp=el('input',{type:'text',className:'inp',placeholder:'Full Name *'});
   const userInp=el('input',{type:'text',className:'inp',placeholder:'Username *'});
   const passInp=el('input',{type:'password',className:'inp',placeholder:'Password * (min 6)'});
+  const waInp=el('input',{type:'tel',className:'inp',placeholder:'WhatsApp Number (with country code e.g. 919876543210)'});
   const roleSel=el('select',{className:'inp'});
   [['staff','Staff'],['admin','Admin'],['auditor','Auditor']].forEach(([v,l])=>roleSel.appendChild(el('option',{value:v},l)));
   const targetInp=el('input',{type:'number',className:'inp',value:'50'});
@@ -1789,13 +1874,14 @@ function openAddUserModal(onSave) {
         el('div',{className:'field',style:'margin:0'},el('label',{},'Username *'),userInp),
         el('div',{className:'field',style:'margin:0'},el('label',{},'Password *'),passInp)
       ),
+      el('div',{className:'field',style:'margin-top:10px'},el('label',{},'WhatsApp Number (for notifications)'),waInp),
       el('div',{className:'form-grid',style:'margin-top:10px'},
         el('div',{className:'field',style:'margin:0'},el('label',{},'Role'),roleSel),
         el('div',{className:'field',style:'margin:0'},el('label',{},'Daily Target'),targetInp)
       ),
       el('button',{className:'btn btn-primary',style:'width:100%;justify-content:center;margin-top:14px',onClick:async()=>{
         if(!nameInp.value||!userInp.value||!passInp.value){mDiv.className='alert alert-error';mDiv.textContent='All fields required.';return;}
-        const r=await api.post('/users',{name:nameInp.value,username:userInp.value,password:passInp.value,role:roleSel.value,daily_target:parseInt(targetInp.value)||50});
+        const r=await api.post('/users',{name:nameInp.value,username:userInp.value,password:passInp.value,role:roleSel.value,daily_target:parseInt(targetInp.value)||50,whatsapp:waInp.value});
         if(r.ok){overlay.remove();if(onSave)onSave();}
         else{mDiv.className='alert alert-error';mDiv.textContent=r.error;}
       }},'Add Member')
@@ -1810,6 +1896,7 @@ function openEditUserModal(user, onSave) {
   const roleSel=el('select',{className:'inp'});
   [['staff','Staff'],['admin','Admin'],['auditor','Auditor']].forEach(([v,l])=>{const o=el('option',{value:v},l);if(v===user.role)o.selected=true;roleSel.appendChild(o);});
   const targetInp=el('input',{type:'number',className:'inp',value:user.daily_target||50});
+  const waEditInp=el('input',{type:'tel',className:'inp',value:user.whatsapp||'',placeholder:'WhatsApp Number (e.g. 919876543210)'});
   const passInp=el('input',{type:'password',className:'inp',placeholder:'New password (leave blank to keep)'});
   const overlay=el('div',{className:'modal-overlay center',onClick:(e)=>{if(e.target===overlay)overlay.remove();}},
     el('div',{className:'modal center-modal'},
@@ -1820,9 +1907,10 @@ function openEditUserModal(user, onSave) {
         el('div',{className:'field',style:'margin:0'},el('label',{},'Role'),roleSel),
         el('div',{className:'field',style:'margin:0'},el('label',{},'Daily Target'),targetInp)
       ),
+      el('div',{className:'field',style:'margin-top:10px'},el('label',{},'WhatsApp Number (for notifications)'),waEditInp),
       el('div',{className:'field',style:'margin-top:10px'},el('label',{},'New Password (optional)'),passInp),
       el('button',{className:'btn btn-primary',style:'width:100%;justify-content:center;margin-top:14px',onClick:async()=>{
-        const body={name:nameInp.value,role:roleSel.value,daily_target:parseInt(targetInp.value)||50};
+        const body={name:nameInp.value,role:roleSel.value,daily_target:parseInt(targetInp.value)||50,whatsapp:waEditInp.value};
         if(passInp.value)body.password=passInp.value;
         const r=await api.put('/users/'+user.id,body);
         if(r.ok){overlay.remove();if(onSave)onSave();}
