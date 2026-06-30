@@ -2204,11 +2204,12 @@ async function renderDialer(container) {
     }
 
     dialerWrap.appendChild(el('div',{style:'text-align:center;margin-bottom:16px'},
-      el('div',{style:'color:var(--muted);font-size:11px;font-weight:600;margin-bottom:4px'},'CALL #'+(callCount+1)),
+      el('div',{style:'color:var(--muted);font-size:11px;font-weight:600;margin-bottom:4px'},'CALL #'+(callCount+1)+' · Calling as: '+STATE.user.name),
       el('div',{style:'font-size:22px;font-weight:800'},lead.name||'Unknown'),
       el('a',{href:`tel:${lead.phone}`,style:'display:block;font-size:28px;font-weight:800;color:var(--accent2);margin:8px 0;font-family:monospace;text-decoration:none;background:var(--bg2);border-radius:10px;padding:12px'},'📞 '+lead.phone),
       lead.city?el('div',{style:'color:var(--muted);font-size:12px'},'📍 '+lead.city):null,
-      lead.category&&lead.category!=='other'?el('div',{style:'color:var(--accent2);font-size:12px;margin-top:2px'},catLabel(lead.category)):null
+      lead.category&&lead.category!=='other'?el('div',{style:'color:var(--accent2);font-size:12px;margin-top:2px'},catLabel(lead.category)):null,
+      lead.assignedStaff&&lead.assignedStaff.name!==STATE.user.name?el('div',{style:'color:var(--muted);font-size:11px;margin-top:4px;background:var(--bg3);border-radius:6px;padding:4px 10px;display:inline-block'},'👤 Assigned to: '+lead.assignedStaff.name):null
     ));
     dialerWrap.appendChild(el('div',{className:'card'},
       el('div',{style:'font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;margin-bottom:10px'},'CALL OUTCOME'),
