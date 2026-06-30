@@ -1801,7 +1801,8 @@ async function renderTeam(container) {
           el('span',{style:`background:${rc}22;color:${rc};padding:3px 10px;border-radius:999px;font-size:11px;font-weight:700`},roleIcons[u.role]+' '+roleLabels[u.role].toUpperCase()),
           el('span',{style:'font-family:monospace;color:var(--muted2);font-size:12px;background:var(--bg4);padding:2px 8px;border-radius:4px'},'@'+u.username)
         ),
-        el('div',{style:'color:var(--muted);font-size:11px;margin-top:4px'},'Joined: '+fmtDay(u.createdAt)+' · Daily Target: '+String(u.daily_target||50)+' calls')
+        el('div',{style:'color:var(--muted);font-size:11px;margin-top:4px'},'Joined: '+fmtDay(u.createdAt)+' · Target: '+String(u.daily_target||50)+' calls/day'),
+        u.whatsapp ? el('div',{style:'color:#25d166;font-size:11px;margin-top:2px'},'📱 WA: +'+u.whatsapp) : el('div',{style:'color:#ef4444;font-size:11px;margin-top:2px'},'⚠️ No WhatsApp number — notifications disabled')
       ),
       el('div',{style:'display:flex;gap:6px;flex-shrink:0'},
         el('button',{className:'btn btn-ghost btn-sm',onClick:()=>openEditUserModal(u,()=>renderTeam(container))},'✏️ Edit'),
