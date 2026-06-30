@@ -12,6 +12,7 @@ const CALL_STATUSES = [
   {value:'busy',label:'Busy',color:'#8b5cf6'},
   {value:'no_answer',label:'No Answer',color:'#f97316'},
   {value:'invalid',label:'Invalid No.',color:'#6b7280'},
+  {value:'whatsapp_sent',label:'💬 WhatsApp Sent',color:'#25d166'},
 ];
 const CALL_MAP = Object.fromEntries(CALL_STATUSES.map(s=>[s.value,s]));
 
@@ -219,7 +220,7 @@ function renderApp() {
 
   const tabs = isAdmin ? [
     {s:'Overview'},{id:'dashboard',l:'🏠 Dashboard',i:'dash'},
-    {s:'Leads'},{id:'assign_leads',l:'📋 Assign Leads',i:'assign'},{id:'all_leads',l:'All Leads',i:'assign'},{id:'import',l:'📤 Import',i:'upload'},{id:'manage_imports',l:'🗑️ Manage Imports',i:'trash'},
+    {s:'Leads'},{id:'assign_leads',l:'📋 Assign Leads',i:'assign'},{id:'all_leads',l:'All Leads',i:'assign'},{id:'ads_leads',l:'📢 Ads Leads',i:'phone'},{id:'import',l:'📤 Import',i:'upload'},{id:'manage_imports',l:'🗑️ Manage Imports',i:'trash'},
     {s:'Sales'},{id:'dialer',l:'📞 Dialer',i:'phone'},{id:'pipeline',l:'📊 Pipeline',i:'pipeline'},{id:'kanban',l:'🗂️ Kanban',i:'pipeline'},{id:'clients',l:'👥 All Clients',i:'users'},{id:'admin_followups',l:'🔔 Follow-ups',i:'audit'},
     {s:'Documents'},{id:'proposals',l:'📄 Proposals',i:'audit'},{id:'invoices',l:'🧾 Invoices',i:'money'},
     {s:'Work'},{id:'tasks',l:'✅ Tasks',i:'check'},
@@ -229,7 +230,7 @@ function renderApp() {
     {s:'Settings'},{id:'team',l:'👥 Team',i:'users'},{id:'work_schedule',l:'🕐 Work Schedule',i:'check'},{id:'work_logs',l:'📅 Work Logs',i:'chart'},{id:'password',l:'🔐 Password',i:'check'},
   ] : isStaff ? [
     {s:'My Work'},{id:'staff_dash',l:'🏠 Dashboard',i:'dash'},{id:'dialer',l:'📞 Dialer',i:'phone'},
-    {s:'Leads'},{id:'my_leads',l:'My Leads',i:'assign'},{id:'followups',l:'🔔 Follow-ups',i:'audit'},
+    {s:'Leads'},{id:'my_leads',l:'My Leads',i:'assign'},{id:'my_ads_leads',l:'📢 Ads Leads',i:'phone'},{id:'followups',l:'🔔 Follow-ups',i:'audit'},
     {s:'Clients'},{id:'my_clients',l:'👥 My Clients',i:'users'},
     {s:'Documents'},{id:'proposals',l:'📄 Proposals',i:'audit'},{id:'invoices',l:'🧾 Invoices',i:'money'},
     {s:'Work'},{id:'tasks',l:'✅ My Tasks',i:'check'},
@@ -328,6 +329,7 @@ function renderApp() {
       if (tab==='dashboard') await renderDashboard(main);
       else if (tab==='assign_leads') await renderAssignLeads(main);
       else if (tab==='all_leads') await renderAllLeads(main);
+      else if (tab==='ads_leads') await renderAdsLeads(main);
       else if (tab==='import') renderImport(main);
       else if (tab==='manage_imports') await renderManageImports(main);
       else if (tab==='dialer') await renderDialer(main);
@@ -352,6 +354,7 @@ function renderApp() {
       if (tab==='staff_dash') await renderStaffDash(main);
       else if (tab==='dialer') await renderDialer(main);
       else if (tab==='my_leads') await renderMyLeads(main);
+      else if (tab==='my_ads_leads') await renderAdsLeads(main, true);
       else if (tab==='followups') await renderFollowups(main);
       else if (tab==='my_clients') await renderMyClients(main);
       else if (tab==='proposals') await renderProposals(main);
@@ -736,11 +739,13 @@ async function renderDashboard(container) {
 async function renderStaffDash(container) {
   container.innerHTML = loading();
   // Fetch fresh user data to get latest daily_target
-  const [statsR, meR, clientsR, tasksR] = await Promise.all([
+  const [statsR, meR, clientsR, tasksR, alertsR, callbacksR] = await Promise.all([
     api.get('/leads/stats'),
     api.get('/me'),
     api.get('/clients?limit=5'),
-    api.get('/tasks?status=pending')
+    api.get('/tasks?status=pending'),
+    api.get('/work/followup-alerts'),
+    api.get('/leads?status=callback&limit=10')
   ]);
   container.innerHTML = '';
   container.appendChild(el('div',{className:'page-title'},'🏠 My Dashboard'));
@@ -752,8 +757,34 @@ async function renderStaffDash(container) {
   const byStatus = Object.fromEntries((s.byStatus||[]).map(x=>[x.status,parseInt(x.cnt)]));
   const myClients = clientsR.ok ? clientsR.data : [];
   const myTasks = tasksR.ok ? tasksR.data : [];
+  const alerts = alertsR.ok ? alertsR : {total:0,overdueCallbacks:0,todayCallbacks:0,overdueFollowups:0,todayFollowups:0};
+  const today = new Date().toISOString().slice(0,10);
+  const myCallbacks = callbacksR.ok ? callbacksR.data : [];
+  const overdueCallbacksList = myCallbacks.filter(l=>l.callback_date&&l.callback_date<today);
+  const todayCallbacksList = myCallbacks.filter(l=>l.callback_date===today);
 
-  // Today progress - always use fresh target from API
+  // ── FOLLOW-UP ALERT BANNER ────────────────────────────────────
+  if(alerts.total>0){
+    const alertCard = el('div',{style:'background:#1a0505;border:1px solid #ef4444;border-radius:12px;padding:16px;margin-bottom:16px;cursor:pointer',onClick:()=>{STATE.tab='followups';render();}});
+    alertCard.appendChild(el('div',{style:'font-weight:800;color:#f87171;font-size:15px;margin-bottom:10px'},'🔔 You have '+alerts.total+' follow-up(s) waiting!'));
+    const aGrid = el('div',{style:'display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px'});
+    [
+      {l:'Overdue Callbacks',v:alerts.overdueCallbacks,c:'#ef4444'},
+      {l:'Today Callbacks',v:alerts.todayCallbacks,c:'#fbbf24'},
+      {l:'Overdue Client F/U',v:alerts.overdueFollowups,c:'#ef4444'},
+      {l:'Client F/U Today',v:alerts.todayFollowups,c:'#fbbf24'}
+    ].forEach(k=>{
+      if(k.v>0) aGrid.appendChild(el('div',{style:`background:${k.c}11;border:1px solid ${k.c}33;border-radius:8px;padding:10px;text-align:center`},
+        el('div',{style:`font-size:20px;font-weight:900;color:${k.c}`},String(k.v)),
+        el('div',{style:'font-size:11px;color:var(--muted2)'},k.l)
+      ));
+    });
+    alertCard.appendChild(aGrid);
+    alertCard.appendChild(el('div',{style:'color:#f87171;font-size:12px;margin-top:10px;font-weight:600'},'👆 Click to view all follow-ups →'));
+    container.appendChild(alertCard);
+  }
+
+  // ── TODAYS TARGET ──────────────────────────────────────────────
   const todayCalls = s.todayCalls||0;
   const target = STATE.user.daily_target || 50;
   const pct = Math.min(100, Math.round((todayCalls/target)*100));
@@ -761,8 +792,8 @@ async function renderStaffDash(container) {
 
   const progCard = el('div',{className:'card',style:'margin-bottom:16px'});
   progCard.appendChild(el('div',{style:'display:flex;justify-content:space-between;align-items:center;margin-bottom:8px'},
-    el('div',{className:'card-title',style:'margin:0'},'🎯 Today\'s Target'),
-    el('div',{style:`font-size:28px;font-weight:900;color:${pColor}`},todayCalls+'/'+target)
+    el('div',{className:'card-title',style:'margin:0'},'🎯 Todays Target'),
+    el('div',{style:`font-size:28px;font-weight:900;color:${pColor}`},String(todayCalls)+'/'+String(target))
   ));
   progCard.appendChild(el('div',{style:'background:var(--bg);border-radius:999px;height:10px;overflow:hidden;margin-bottom:6px'},
     el('div',{style:`width:${pct}%;background:linear-gradient(90deg,#6366f1,${pColor});height:100%;border-radius:999px`})
@@ -787,6 +818,35 @@ async function renderStaffDash(container) {
       el('button',{className:'btn btn-ghost',onClick:()=>{STATE.tab='tasks';render();}},'✅ My Tasks')
     )
   ));
+
+  // ── MY CALLBACKS TODAY/OVERDUE (direct on dashboard) ──────────
+  let activeModal = null;
+  if(overdueCallbacksList.length || todayCallbacksList.length){
+    const cbCard = el('div',{className:'card',style:'margin-bottom:16px'});
+    cbCard.appendChild(el('div',{style:'display:flex;justify-content:space-between;align-items:center;margin-bottom:12px'},
+      el('div',{className:'card-title',style:'margin:0'},'📞 My Callbacks Due'),
+      el('button',{className:'btn btn-ghost btn-sm',onClick:()=>{STATE.tab='followups';render();}},'View All →')
+    ));
+    [...overdueCallbacksList, ...todayCallbacksList].slice(0,5).forEach(l=>{
+      const isOverdue = l.callback_date < today;
+      const color = isOverdue ? '#ef4444' : '#fbbf24';
+      const row = el('div',{style:`display:flex;justify-content:space-between;align-items:center;padding:10px;background:var(--bg4);border-radius:8px;margin-bottom:6px;border-left:3px solid ${color};cursor:pointer`,onClick:()=>{
+        if(activeModal) activeModal.remove();
+        activeModal = renderCallModal(l, ()=>{activeModal&&activeModal.remove();activeModal=null;renderStaffDash(container);}, ()=>{activeModal&&activeModal.remove();activeModal=null;});
+        document.body.appendChild(activeModal);
+      }});
+      row.appendChild(el('div',{},
+        el('div',{style:'font-weight:600;font-size:13px'},l.name||'Unknown'),
+        el('div',{style:'font-family:monospace;color:var(--muted2);font-size:12px'},l.phone||'—')
+      ));
+      row.appendChild(el('div',{style:'text-align:right'},
+        el('div',{style:`color:${color};font-size:11px;font-weight:700`},isOverdue?'⚠️ OVERDUE':'📅 Today'),
+        el('a',{href:'tel:'+l.phone,className:'btn btn-success btn-xs',style:'text-decoration:none;margin-top:4px;display:inline-block',onClick:(e)=>e.stopPropagation()},'📞 Call')
+      ));
+      cbCard.appendChild(row);
+    });
+    container.appendChild(cbCard);
+  }
 
   // Recent clients
   if (myClients.length) {
@@ -2470,14 +2530,16 @@ async function renderFollowups(container) {
 
 async function renderAdminFollowups(container, isStaffView=false) {
   container.innerHTML = loading();
-  const [leadsR, clientsR, usersR] = await Promise.all([
+  const [leadsR, clientsR, usersR, waFollowupsR] = await Promise.all([
     api.get('/leads?status=callback&limit=500'),
     api.get('/clients?limit=500'),
-    api.get('/users')
+    isStaffView ? Promise.resolve({ok:true,data:[]}) : api.get('/users'),
+    api.get('/leads/wa-followups')
   ]);
   const leads = leadsR.ok ? leadsR.data : [];
   const clients = clientsR.ok ? clientsR.data : [];
   const users = usersR.ok ? usersR.data : [];
+  const waFollowups = waFollowupsR.ok ? waFollowupsR.data : [];
   const today = new Date().toISOString().slice(0,10);
   const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate()+1);
   const tomorrowStr = tomorrow.toISOString().slice(0,10);
@@ -2530,6 +2592,7 @@ async function renderAdminFollowups(container, isStaffView=false) {
     {l:'🟡 Client Due Today',v:todayClients.length,c:'#fbbf24'},
     {l:'🟢 Upcoming Clients',v:upcomingClients.length,c:'#22c55e'},
     {l:'📋 Total Pending',v:overdueLeads.length+todayLeads.length+overdueClients.length+todayClients.length,c:'#6366f1'},
+    {l:'💬 WhatsApp Follow-ups',v:waFollowups.length,c:'#25d166'},
   ].forEach(k=>{
     const card = el('div',{style:`background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:14px;border-left:4px solid ${k.c};cursor:pointer;transition:all 0.2s`});
     card.addEventListener('mouseenter',()=>{card.style.transform='translateY(-2px)';card.style.boxShadow=`0 4px 16px ${k.c}22`;});
@@ -2616,6 +2679,34 @@ async function renderAdminFollowups(container, isStaffView=false) {
     return card;
   }
 
+  function renderWaFollowupCard(l, borderColor) {
+    const staff = getStaffName(l.assigned_to);
+    const card = el('div',{style:`background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:14px;border-left:4px solid ${borderColor};cursor:pointer;transition:all 0.15s;margin-bottom:8px`});
+    card.addEventListener('mouseenter',()=>{card.style.transform='translateX(2px)';});
+    card.addEventListener('mouseleave',()=>{card.style.transform='';});
+    card.addEventListener('click',()=>{
+      if(activeModal)activeModal.remove();
+      activeModal=renderCallModal(l,()=>{activeModal&&activeModal.remove();activeModal=null;renderAdminFollowups(container,isStaffView);},()=>{activeModal&&activeModal.remove();activeModal=null;});
+      document.body.appendChild(activeModal);
+    });
+    card.appendChild(el('div',{style:'display:flex;justify-content:space-between;align-items:flex-start;gap:10px'},
+      el('div',{style:'flex:1'},
+        el('div',{style:'font-weight:700;font-size:14px'},l.name||'Unknown'),
+        el('div',{style:'font-family:monospace;color:var(--muted2);font-size:13px;margin-top:2px'},l.phone||'—'),
+        el('div',{style:'display:flex;gap:8px;margin-top:6px;flex-wrap:wrap'},
+          el('span',{style:'font-size:11px;color:var(--muted2);background:var(--bg4);padding:2px 7px;border-radius:4px'},'👤 '+staff),
+          el('span',{style:'font-size:11px;color:#25d166;background:rgba(37,211,102,0.1);padding:2px 7px;border-radius:4px'},'💬 WA Sent')
+        ),
+        l.last_note?el('div',{style:'color:var(--muted);font-size:11px;margin-top:6px;font-style:italic;padding-top:6px;border-top:1px solid var(--border)'},'📝 '+l.last_note):null
+      ),
+      el('div',{style:'text-align:right;flex-shrink:0;display:flex;flex-direction:column;gap:4px;align-items:flex-end'},
+        el('span',{style:`color:${borderColor};font-size:11px;font-weight:700`},'📅 Follow-up: '+(l.wa_followup_date||'Today')),
+        el('a',{href:'tel:'+l.phone,className:'btn btn-success btn-xs',style:'text-decoration:none',onClick:(e)=>e.stopPropagation()},'📞 Call Now')
+      )
+    ));
+    return card;
+  }
+
   function renderSection(title, items, renderFn, color, emptyMsg='None') {
     const sec = el('div',{style:'margin-bottom:20px'});
     const header = el('div',{style:`display:flex;align-items:center;gap:10px;margin-bottom:10px;padding:10px 14px;background:${color}11;border-radius:8px;border-left:4px solid ${color}`});
@@ -2651,6 +2742,11 @@ async function renderAdminFollowups(container, isStaffView=false) {
     sectionsDiv.appendChild(renderSection('🕐 Tomorrows Callbacks', tmrLeads, l=>renderLeadCard(l,'#fb923c'), '#fb923c', 'No callbacks for tomorrow'));
     sectionsDiv.appendChild(renderSection('📅 Next 7 Days', n7Leads, l=>renderLeadCard(l,'#8b5cf6'), '#8b5cf6', 'No callbacks in next 7 days'));
     if(futLeads.length) sectionsDiv.appendChild(renderSection('🗓️ Future Callbacks', futLeads.slice(0,20), l=>renderLeadCard(l,'#06b6d4'), '#06b6d4', ''));
+
+    // WHATSAPP FOLLOW-UPS
+    const fWaFollowups = staffFilter==='all' ? waFollowups : waFollowups.filter(l=>String(l.assigned_to)===staffFilter);
+    sectionsDiv.appendChild(el('div',{style:'font-size:13px;font-weight:800;color:var(--text);text-transform:uppercase;letter-spacing:1px;margin:20px 0 12px;padding-bottom:8px;border-bottom:2px solid var(--border)'},'💬 WHATSAPP FOLLOW-UPS'));
+    sectionsDiv.appendChild(renderSection('💬 Recontact — WhatsApp Sent Yesterday', fWaFollowups, l=>renderWaFollowupCard(l,'#25d166'), '#25d166', 'No WhatsApp follow-ups pending'));
 
     // CLIENT FOLLOW-UPS
     sectionsDiv.appendChild(el('div',{style:'font-size:13px;font-weight:800;color:var(--text);text-transform:uppercase;letter-spacing:1px;margin:20px 0 12px;padding-bottom:8px;border-bottom:2px solid var(--border)'},'👥 CLIENT FOLLOW-UPS'));
@@ -3809,6 +3905,197 @@ async function renderMyWork(container) {
     histCard.appendChild(tw);
     container.appendChild(histCard);
   }
+}
+
+
+boot();
+
+// ── ADS LEADS (Special handling - no phone calling required) ─────
+async function renderAdsLeads(container, isStaffView=false) {
+  container.innerHTML = loading();
+  const user = STATE.user;
+  const params = new URLSearchParams({source:'ads', limit:200});
+  if(isStaffView) params.set('assigned', user.id);
+  const r = await api.get('/leads?'+params);
+  container.innerHTML = '';
+
+  container.appendChild(el('div',{style:'display:flex;justify-content:space-between;align-items:center;margin-bottom:16px'},
+    el('div',{className:'page-title',style:'margin:0'},'📢 Ads Leads'),
+    el('button',{className:'btn btn-ghost btn-sm',onClick:()=>renderAdsLeads(container,isStaffView)},'🔄 Refresh')
+  ));
+
+  container.appendChild(el('div',{className:'alert alert-info',style:'margin-bottom:16px'},'💡 Ads leads come from social media/online campaigns. Reach out via Call, WhatsApp, or schedule a Follow-up — no cold-calling required.'));
+
+  const leads = r.ok ? r.data : [];
+  const total = r.ok ? r.total : 0;
+
+  // Stats
+  const statusCounts = {};
+  leads.forEach(l=>{statusCounts[l.status]=(statusCounts[l.status]||0)+1;});
+  const grid = el('div',{style:'display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:12px;margin-bottom:20px'});
+  [
+    {l:'Total Ads Leads',v:total,c:'#f59e0b'},
+    {l:'Pending',v:statusCounts.pending||0,c:'#94a3b8'},
+    {l:'Contacted',v:statusCounts.called||0,c:'#3b82f6'},
+    {l:'Interested',v:statusCounts.interested||0,c:'#22c55e'},
+    {l:'Follow-up',v:statusCounts.callback||0,c:'#fbbf24'},
+    {l:'Not Interested',v:statusCounts.not_interested||0,c:'#ef4444'},
+  ].forEach(k=>{
+    grid.appendChild(el('div',{style:`background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:14px;border-top:3px solid ${k.c}`},
+      el('div',{style:`font-size:22px;font-weight:900;color:${k.c}`},String(k.v)),
+      el('div',{style:'font-size:10px;color:var(--muted2);text-transform:uppercase;font-weight:600;margin-top:6px'},k.l)
+    ));
+  });
+  container.appendChild(grid);
+
+  // Filters
+  const searchInp = el('input',{type:'search',className:'inp inp-sm',placeholder:'Search name or phone…',style:'flex:1;min-width:180px'});
+  const statusSel = el('select',{className:'inp inp-sm'});
+  [['all','All Status'],['pending','Pending'],['called','Contacted'],['interested','⭐ Interested'],['not_interested','Not Interested'],['callback','Follow-up Set']].forEach(([v,l])=>statusSel.appendChild(el('option',{value:v},l)));
+  container.appendChild(el('div',{className:'filters-bar'},searchInp, statusSel));
+
+  const listArea = el('div',{});
+  container.appendChild(listArea);
+
+  let activeModal = null;
+
+  function renderList() {
+    const search = searchInp.value.toLowerCase();
+    const status = statusSel.value;
+    const filtered = leads.filter(l=>{
+      if(search && !((l.name||'').toLowerCase().includes(search)||(l.phone||'').includes(search))) return false;
+      if(status!=='all' && l.status!==status) return false;
+      return true;
+    });
+    listArea.innerHTML='';
+    if(!filtered.length){
+      listArea.appendChild(el('div',{style:'text-align:center;padding:40px;color:var(--muted)'},
+        el('div',{style:'font-size:40px;margin-bottom:12px'},'📢'),
+        'No ads leads found.'
+      ));
+      return;
+    }
+
+    listArea.appendChild(el('p',{style:'color:var(--muted);font-size:12px;margin-bottom:10px'},filtered.length+' ads leads'));
+
+    const list = el('div',{className:'lead-list'});
+    filtered.forEach(lead=>{
+      const s = CALL_MAP[lead.status||'pending'];
+      const card = el('div',{className:'lead-card',style:`border-left-color:${s.color}`});
+
+      card.appendChild(el('div',{className:'lead-card-top'},
+        el('div',{},
+          el('div',{className:'lead-name'},lead.name||'Unknown'),
+          el('div',{className:'lead-phone'},lead.phone||'—'),
+          el('div',{className:'lead-meta'},catLabel(lead.category)+(lead.city?' · 📍'+lead.city:'')+(lead.email?' · ✉️'+lead.email:''))
+        ),
+        callBadge(lead.status)
+      ));
+
+      if(lead.last_note) card.appendChild(el('div',{className:'lead-note'},'📝 '+lead.last_note));
+      if(lead.callback_date) card.appendChild(el('div',{style:'color:#fbbf24;font-size:11px;margin-top:4px'},'📅 Follow-up: '+lead.callback_date));
+
+      // Action buttons row
+      const actionsRow = el('div',{style:'display:flex;gap:8px;margin-top:10px;flex-wrap:wrap'});
+
+      // Call button
+      actionsRow.appendChild(el('a',{href:'tel:'+lead.phone,className:'btn btn-success btn-sm',style:'text-decoration:none',onClick:(e)=>e.stopPropagation()},'📞 Call'));
+
+      // WhatsApp button
+      actionsRow.appendChild(el('button',{className:'btn btn-sm',style:'background:rgba(37,211,102,0.15);color:#25d166;border:1px solid rgba(37,211,102,0.3)',onClick:(e)=>{
+        e.stopPropagation();
+        openWhatsAppModal(lead.phone, null, lead.name, ()=>renderAdsLeads(container,isStaffView));
+      }},'💬 WhatsApp'));
+
+      // Follow-up / Update Status button
+      actionsRow.appendChild(el('button',{className:'btn btn-cyan btn-sm',onClick:(e)=>{
+        e.stopPropagation();
+        if(activeModal) activeModal.remove();
+        activeModal = renderAdsLeadModal(lead, ()=>{activeModal&&activeModal.remove();activeModal=null;renderAdsLeads(container,isStaffView);}, ()=>{activeModal&&activeModal.remove();activeModal=null;});
+        document.body.appendChild(activeModal);
+      }},'📋 Update Status'));
+
+      card.appendChild(actionsRow);
+      list.appendChild(card);
+    });
+    listArea.appendChild(list);
+  }
+
+  let st;
+  searchInp.addEventListener('input',()=>{clearTimeout(st);st=setTimeout(renderList,300);});
+  statusSel.addEventListener('change',renderList);
+  renderList();
+}
+
+// ── ADS LEAD STATUS MODAL (No calling required) ───────────────────
+function renderAdsLeadModal(lead, onSave, onClose) {
+  let selectedStatus = lead.status||'pending';
+  const cbRow = el('div',{style:'display:none'},el('div',{className:'field'},el('label',{},'Follow-up Date'),el('input',{type:'date',className:'inp',id:'al-cb-date'})));
+  const niRow = el('div',{style:'display:none'},el('div',{className:'field'},el('label',{},'Reason'),el('textarea',{className:'inp',id:'al-ni-reason',rows:2,placeholder:'Why not interested?'})));
+  const noteInp = el('textarea',{className:'inp',rows:2,placeholder:'Notes (e.g. what they said, what was discussed)…'});
+  const mDiv = el('div',{});
+
+  const ADS_STATUSES = [
+    {value:'called',label:'✅ Contacted',color:'#3b82f6'},
+    {value:'interested',label:'⭐ Interested',color:'#22c55e'},
+    {value:'callback',label:'📅 Follow-up Set',color:'#fbbf24'},
+    {value:'not_interested',label:'❌ Not Interested',color:'#ef4444'},
+    {value:'invalid',label:'⚠️ Invalid Contact',color:'#6b7280'},
+  ];
+
+  const statusGrid = el('div',{style:'display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px'});
+  ADS_STATUSES.forEach(s=>{
+    const btn = el('button',{className:'status-btn',style:`color:${s.color};border-color:${s.color}44${selectedStatus===s.value?`;background:${s.color};color:#fff;border-color:${s.color}`:''}`,onClick:()=>{
+      selectedStatus = s.value;
+      statusGrid.querySelectorAll('.status-btn').forEach(b=>{b.style.background='var(--bg)';b.style.color=b.dataset.c;b.style.borderColor=b.dataset.c+'44';});
+      btn.style.background=s.color;btn.style.color='#fff';btn.style.borderColor=s.color;
+      cbRow.style.display = s.value==='callback'?'':'none';
+      niRow.style.display = s.value==='not_interested'?'':'none';
+    }},s.label);
+    btn.dataset.c = s.color;
+    statusGrid.appendChild(btn);
+  });
+
+  const saveBtn = el('button',{className:'btn btn-primary',style:'width:100%;justify-content:center;margin-top:4px',onClick:async()=>{
+    if(!selectedStatus||selectedStatus==='pending'){mDiv.className='alert alert-error';mDiv.textContent='Select a status.';return;}
+    saveBtn.disabled=true;saveBtn.textContent='Saving…';
+    const body = {status:selectedStatus, note:noteInp.value};
+    const cbDate = document.getElementById('al-cb-date');
+    const niReason = document.getElementById('al-ni-reason');
+    if(selectedStatus==='callback'&&cbDate?.value) body.callback_date=cbDate.value;
+    if(selectedStatus==='not_interested'&&niReason?.value) body.not_converted_reason=niReason.value;
+    const r = await api.post('/leads/'+lead.id+'/log', body);
+    if(r.ok){
+      if(r.newClient){mDiv.className='alert alert-success';mDiv.textContent='⭐ Added to client pipeline!';setTimeout(()=>onSave(),1000);}
+      else onSave();
+    } else {mDiv.className='alert alert-error';mDiv.textContent=r.error;saveBtn.disabled=false;saveBtn.textContent='Save Update';}
+  }},'Save Update');
+
+  const modal = el('div',{className:'modal-overlay center',onClick:(e)=>{if(e.target===modal)onClose();}},
+    el('div',{className:'modal center-modal'},
+      el('div',{className:'modal-header'},
+        el('div',{},
+          el('div',{style:'font-weight:700;font-size:17px'},lead.name||'Lead'),
+          el('div',{style:'color:var(--muted);font-size:12px;margin-top:2px'},lead.phone+' · 📢 Ads Lead')
+        ),
+        el('button',{className:'modal-close',onClick:onClose},'✕')
+      ),
+      mDiv,
+      el('div',{className:'field'},el('label',{},'Update Status'),statusGrid),
+      cbRow, niRow,
+      el('div',{className:'field'},el('label',{},'Note'),noteInp),
+      lead.last_note?el('div',{className:'alert alert-info',style:'font-size:12px;margin-bottom:10px'},'Previous note: '+lead.last_note):null,
+      saveBtn,
+      el('div',{style:'display:flex;gap:8px;margin-top:12px'},
+        el('a',{href:'tel:'+lead.phone,className:'btn btn-success btn-sm',style:'flex:1;justify-content:center;text-decoration:none'},'📞 Call Now'),
+        el('button',{className:'btn btn-sm',style:'flex:1;justify-content:center;background:rgba(37,211,102,0.15);color:#25d166;border:1px solid rgba(37,211,102,0.3)',onClick:()=>{
+          onClose();
+          openWhatsAppModal(lead.phone, null, lead.name, onSave);
+        }},'💬 WhatsApp')
+      )
+    )
+  );
+  return modal;
 }
 
 
