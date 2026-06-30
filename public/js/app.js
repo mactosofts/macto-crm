@@ -2717,20 +2717,18 @@ async function renderAdminFollowups(container, isStaffView=false) {
   let showNotInterested = false;
   const staffUsers = users.filter(u=>u.role==='staff');
 
-  // 3-category quick summary banner (Callback / Interested / Busy)
-  const callbackTotal = leads.filter(l=>l.callback_date).length;
-  const interestedTotal = interestedLeads.length;
-  const busyTotal = busyLeads.length;
+  // 3-category quick summary banner - shows most urgent numbers
+  const urgentCallbacks = overdueLeads.length + todayLeads.length;
   const summaryBanner = el('div',{style:'display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px'});
   [
-    {l:'📞 Call Back',v:callbackTotal,c:'#fbbf24',desc:'Leads with a callback date set'},
-    {l:'⭐ Interested',v:interestedTotal,c:'#22c55e',desc:'Need next-step action'},
-    {l:'😴 Busy',v:busyTotal,c:'#8b5cf6',desc:'Waiting to recontact'},
+    {l:'📞 Urgent Call Backs',v:urgentCallbacks,c:'#ef4444',sub:overdueLeads.length+' overdue + '+todayLeads.length+' today'},
+    {l:'⭐ Interested',v:interestedLeads.length,c:'#22c55e',sub:'Need next-step action'},
+    {l:'😴 Busy Recontact',v:busyNeedsRecontact.length,c:'#8b5cf6',sub:'Waiting 2+ days'},
   ].forEach(k=>{
     summaryBanner.appendChild(el('div',{style:`background:linear-gradient(135deg,${k.c}15,${k.c}05);border:1px solid ${k.c}33;border-radius:14px;padding:18px;text-align:center`},
-      el('div',{style:`font-size:32px;font-weight:900;color:${k.c}`},String(k.v)),
-      el('div',{style:'font-size:13px;font-weight:700;color:var(--text);margin-top:4px'},k.l),
-      el('div',{style:'font-size:11px;color:var(--muted);margin-top:2px'},k.desc)
+      el('div',{style:`font-size:36px;font-weight:900;color:${k.c};line-height:1`},String(k.v)),
+      el('div',{style:'font-size:13px;font-weight:700;color:var(--text);margin-top:6px'},k.l),
+      el('div',{style:'font-size:11px;color:var(--muted2);margin-top:3px'},k.sub)
     ));
   });
   container.appendChild(summaryBanner);
@@ -2771,25 +2769,31 @@ async function renderAdminFollowups(container, isStaffView=false) {
   const interestedNoClient = interestedLeads; // interested leads that haven't been pushed to pipeline yet
 
   // Build a true deduplicated set of "needs follow-up" items by unique key (no double counting)
+  // Correct total: every unique lead/client that needs action
   const followupKeys = new Set();
   overdueLeads.forEach(l=>followupKeys.add('lead-'+l.id));
   todayLeads.forEach(l=>followupKeys.add('lead-'+l.id));
+  tomorrowLeads.forEach(l=>followupKeys.add('lead-'+l.id));
+  next7Leads.forEach(l=>followupKeys.add('lead-'+l.id));
   interestedNoClient.forEach(l=>followupKeys.add('lead-'+l.id));
   busyNeedsRecontact.forEach(l=>followupKeys.add('lead-'+l.id));
   overdueClients.forEach(c=>followupKeys.add('client-'+c.id));
   todayClients.forEach(c=>followupKeys.add('client-'+c.id));
+  upcomingClients.forEach(c=>followupKeys.add('client-'+c.id));
+  waFollowups.forEach(l=>followupKeys.add('wa-'+l.id));
   const totalUniqueFollowups = followupKeys.size;
 
-  const kpiGrid = el('div',{style:'display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:12px;margin-bottom:20px'});
+  const kpiGrid = el('div',{style:'display:grid;grid-template-columns:repeat(auto-fill,minmax(145px,1fr));gap:12px;margin-bottom:20px'});
   [
-    {l:'🔴 Overdue Callbacks',v:overdueLeads.length,c:'#ef4444'},
-    {l:'🟡 Today Callbacks',v:todayLeads.length,c:'#fbbf24'},
-    {l:'⭐ Need Next Step',v:interestedNoClient.length,c:'#22c55e'},
-    {l:'😴 Busy — Recontact',v:busyNeedsRecontact.length,c:'#8b5cf6'},
-    {l:'🔴 Overdue Clients',v:overdueClients.length,c:'#ef4444'},
-    {l:'🟡 Client Due Today',v:todayClients.length,c:'#fbbf24'},
-    {l:'💬 WhatsApp Follow-ups',v:waFollowups.length,c:'#25d166'},
-    {l:'📋 Total Follow-ups',v:totalUniqueFollowups,c:'#6366f1'},
+    {l:'🔴 Overdue Callbacks',v:overdueLeads.length,c:'#ef4444',click:'overdue'},
+    {l:'🟡 Today Callbacks',v:todayLeads.length,c:'#fbbf24',click:'today'},
+    {l:'🕐 Tomorrow Callbacks',v:tomorrowLeads.length,c:'#fb923c',click:'tomorrow'},
+    {l:'📅 This Week',v:next7Leads.length,c:'#8b5cf6',click:'week'},
+    {l:'⭐ Interested',v:interestedNoClient.length,c:'#22c55e',click:'interested'},
+    {l:'😴 Busy Recontact',v:busyNeedsRecontact.length,c:'#8b5cf6',click:'busy'},
+    {l:'💬 WhatsApp Follow-up',v:waFollowups.length,c:'#25d166',click:'wa'},
+    {l:'👥 Client Follow-ups',v:overdueClients.length+todayClients.length+upcomingClients.length,c:'#06b6d4',click:'clients'},
+    {l:'📋 TOTAL Follow-ups',v:totalUniqueFollowups,c:'#6366f1',click:''},
   ].forEach(k=>{
     const card = el('div',{style:`background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:14px;border-left:4px solid ${k.c};cursor:pointer;transition:all 0.2s`});
     card.addEventListener('mouseenter',()=>{card.style.transform='translateY(-2px)';card.style.boxShadow=`0 4px 16px ${k.c}22`;});
@@ -3061,32 +3065,49 @@ async function renderAdminFollowups(container, isStaffView=false) {
     const upClients = fClients.filter(c=>c.next_followup&&c.next_followup>today&&!['completed','lost'].includes(c.pipeline_stage));
 
     // CALL BACK
-    sectionsDiv.appendChild(el('div',{style:'font-size:13px;font-weight:800;color:var(--text);text-transform:uppercase;letter-spacing:1px;margin-bottom:12px;padding-bottom:8px;border-bottom:2px solid var(--border)'},'📞 CALL BACK'));
-    sectionsDiv.appendChild(renderSection('🔴 Overdue Callbacks', oLeads, l=>renderLeadCard(l,'#ef4444'), '#ef4444', 'No overdue callbacks!'));
-    sectionsDiv.appendChild(renderSection('🟡 Todays Callbacks', tLeads, l=>renderLeadCard(l,'#fbbf24'), '#fbbf24', 'No callbacks scheduled for today'));
-    sectionsDiv.appendChild(renderSection('🕐 Tomorrows Callbacks', tmrLeads, l=>renderLeadCard(l,'#fb923c'), '#fb923c', 'No callbacks for tomorrow'));
-    sectionsDiv.appendChild(renderSection('📅 Next 7 Days', n7Leads, l=>renderLeadCard(l,'#8b5cf6'), '#8b5cf6', 'No callbacks in next 7 days'));
-    if(futLeads.length) sectionsDiv.appendChild(renderSection('🗓️ Future Callbacks', futLeads.slice(0,20), l=>renderLeadCard(l,'#06b6d4'), '#06b6d4', ''));
+    const totalCallbacks = oLeads.length + tLeads.length + tmrLeads.length + n7Leads.length;
+    sectionsDiv.appendChild(el('div',{style:'display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;padding-bottom:8px;border-bottom:2px solid #fbbf2444'},
+      el('span',{style:'font-size:13px;font-weight:800;color:#fbbf24;text-transform:uppercase;letter-spacing:1px'},'📞 CALL BACK'),
+      el('span',{style:'background:#fbbf24;color:#000;border-radius:999px;padding:2px 12px;font-size:12px;font-weight:800'},String(totalCallbacks)+' total')
+    ));
+    sectionsDiv.appendChild(renderSection('🔴 Overdue ('+String(oLeads.length)+')', oLeads, l=>renderLeadCard(l,'#ef4444'), '#ef4444', '✅ No overdue callbacks!'));
+    sectionsDiv.appendChild(renderSection('🟡 Today ('+String(tLeads.length)+')', tLeads, l=>renderLeadCard(l,'#fbbf24'), '#fbbf24', '✅ No callbacks for today'));
+    sectionsDiv.appendChild(renderSection('🕐 Tomorrow ('+String(tmrLeads.length)+')', tmrLeads, l=>renderLeadCard(l,'#fb923c'), '#fb923c', '✅ No callbacks for tomorrow'));
+    sectionsDiv.appendChild(renderSection('📅 Next 7 Days ('+String(n7Leads.length)+')', n7Leads, l=>renderLeadCard(l,'#8b5cf6'), '#8b5cf6', '✅ No callbacks this week'));
+    if(futLeads.length) sectionsDiv.appendChild(renderSection('🗓️ Future ('+String(futLeads.length)+')', futLeads.slice(0,20), l=>renderLeadCard(l,'#06b6d4'), '#06b6d4', ''));
 
     // INTERESTED — needs next step
-    sectionsDiv.appendChild(el('div',{style:'font-size:13px;font-weight:800;color:var(--text);text-transform:uppercase;letter-spacing:1px;margin:20px 0 12px;padding-bottom:8px;border-bottom:2px solid var(--border)'},'⭐ INTERESTED — NEEDS NEXT STEP'));
-    sectionsDiv.appendChild(renderSection('⭐ Awaiting Action', fInterested, renderInterestedCard, '#22c55e', 'No interested leads waiting on action'));
+    sectionsDiv.appendChild(el('div',{style:'display:flex;align-items:center;justify-content:space-between;margin:20px 0 12px;padding-bottom:8px;border-bottom:2px solid #22c55e44'},
+      el('span',{style:'font-size:13px;font-weight:800;color:#22c55e;text-transform:uppercase;letter-spacing:1px'},'⭐ INTERESTED — NEEDS NEXT STEP'),
+      el('span',{style:'background:#22c55e;color:#fff;border-radius:999px;padding:2px 12px;font-size:12px;font-weight:800'},String(fInterested.length)+' leads')
+    ));
+    sectionsDiv.appendChild(renderSection('⭐ Awaiting Action ('+String(fInterested.length)+')', fInterested, renderInterestedCard, '#22c55e', '✅ No interested leads waiting on action'));
 
     // BUSY — recontact after waiting period
-    sectionsDiv.appendChild(el('div',{style:'font-size:13px;font-weight:800;color:var(--text);text-transform:uppercase;letter-spacing:1px;margin:20px 0 12px;padding-bottom:8px;border-bottom:2px solid var(--border)'},'😴 BUSY — RECONTACT'));
-    sectionsDiv.appendChild(renderSection('😴 Ready to Try Again (2+ days)', fBusyRecontact, renderBusyCard, '#8b5cf6', 'No busy leads ready for recontact'));
+    sectionsDiv.appendChild(el('div',{style:'display:flex;align-items:center;justify-content:space-between;margin:20px 0 12px;padding-bottom:8px;border-bottom:2px solid #8b5cf644'},
+      el('span',{style:'font-size:13px;font-weight:800;color:#8b5cf6;text-transform:uppercase;letter-spacing:1px'},'😴 BUSY — RECONTACT'),
+      el('span',{style:'background:#8b5cf6;color:#fff;border-radius:999px;padding:2px 12px;font-size:12px;font-weight:800'},String(fBusyRecontact.length)+' leads')
+    ));
+    sectionsDiv.appendChild(renderSection('😴 Ready to Try Again ('+String(fBusyRecontact.length)+')', fBusyRecontact, renderBusyCard, '#8b5cf6', '✅ No busy leads ready for recontact'));
 
     // WHATSAPP FOLLOW-UPS
     const fWaFollowups = staffFilter==='all' ? waFollowups : waFollowups.filter(l=>String(l.assigned_to)===staffFilter);
-    sectionsDiv.appendChild(el('div',{style:'font-size:13px;font-weight:800;color:var(--text);text-transform:uppercase;letter-spacing:1px;margin:20px 0 12px;padding-bottom:8px;border-bottom:2px solid var(--border)'},'💬 WHATSAPP FOLLOW-UPS'));
-    sectionsDiv.appendChild(renderSection('💬 Recontact — WhatsApp Sent', fWaFollowups, l=>renderWaFollowupCard(l,'#25d166'), '#25d166', 'No WhatsApp follow-ups pending'));
+    sectionsDiv.appendChild(el('div',{style:'display:flex;align-items:center;justify-content:space-between;margin:20px 0 12px;padding-bottom:8px;border-bottom:2px solid #25d16644'},
+      el('span',{style:'font-size:13px;font-weight:800;color:#25d166;text-transform:uppercase;letter-spacing:1px'},'💬 WHATSAPP FOLLOW-UPS'),
+      el('span',{style:'background:#25d166;color:#fff;border-radius:999px;padding:2px 12px;font-size:12px;font-weight:800'},String(fWaFollowups.length)+' leads')
+    ));
+    sectionsDiv.appendChild(renderSection('💬 Recontact — WhatsApp Sent ('+String(fWaFollowups.length)+')', fWaFollowups, l=>renderWaFollowupCard(l,'#25d166'), '#25d166', '✅ No WhatsApp follow-ups pending'));
 
     // CLIENT FOLLOW-UPS
-    sectionsDiv.appendChild(el('div',{style:'font-size:13px;font-weight:800;color:var(--text);text-transform:uppercase;letter-spacing:1px;margin:20px 0 12px;padding-bottom:8px;border-bottom:2px solid var(--border)'},'👥 CLIENT FOLLOW-UPS'));
-    sectionsDiv.appendChild(renderSection('🔴 Overdue Client Follow-ups', oClients, c=>renderClientCard(c,'#ef4444'), '#ef4444', 'No overdue client follow-ups!'));
-    sectionsDiv.appendChild(renderSection('🟡 Todays Client Follow-ups', tClients, c=>renderClientCard(c,'#fbbf24'), '#fbbf24', 'No client follow-ups for today'));
-    sectionsDiv.appendChild(renderSection('🕐 Tomorrows Client Follow-ups', tmrClients, c=>renderClientCard(c,'#fb923c'), '#fb923c', 'No client follow-ups for tomorrow'));
-    sectionsDiv.appendChild(renderSection('🟢 Upcoming Client Follow-ups', upClients.slice(0,30), c=>renderClientCard(c,'#22c55e'), '#22c55e', 'No upcoming client follow-ups'));
+    const totalClientFU = oClients.length+tClients.length+tmrClients.length+upClients.length;
+    sectionsDiv.appendChild(el('div',{style:'display:flex;align-items:center;justify-content:space-between;margin:20px 0 12px;padding-bottom:8px;border-bottom:2px solid #06b6d444'},
+      el('span',{style:'font-size:13px;font-weight:800;color:#06b6d4;text-transform:uppercase;letter-spacing:1px'},'👥 CLIENT FOLLOW-UPS'),
+      el('span',{style:'background:#06b6d4;color:#fff;border-radius:999px;padding:2px 12px;font-size:12px;font-weight:800'},String(totalClientFU)+' clients')
+    ));
+    sectionsDiv.appendChild(renderSection('🔴 Overdue ('+String(oClients.length)+')', oClients, c=>renderClientCard(c,'#ef4444'), '#ef4444', '✅ No overdue client follow-ups!'));
+    sectionsDiv.appendChild(renderSection('🟡 Today ('+String(tClients.length)+')', tClients, c=>renderClientCard(c,'#fbbf24'), '#fbbf24', '✅ No client follow-ups for today'));
+    sectionsDiv.appendChild(renderSection('🕐 Tomorrow ('+String(tmrClients.length)+')', tmrClients, c=>renderClientCard(c,'#fb923c'), '#fb923c', '✅ No client follow-ups for tomorrow'));
+    if(upClients.length) sectionsDiv.appendChild(renderSection('🟢 Upcoming ('+String(upClients.length)+')', upClients.slice(0,30), c=>renderClientCard(c,'#22c55e'), '#22c55e', '✅ No upcoming client follow-ups'));
 
     // NOT INTERESTED — collapsed by default, toggle to view
     sectionsDiv.appendChild(el('div',{style:'margin:24px 0 12px'},
