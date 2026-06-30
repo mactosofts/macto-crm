@@ -442,7 +442,7 @@ router.post('/leads/:id/log', apiAuth, async (req, res) => {
 
     if (status === 'interested') {
       if (!existingClient) {
-        // Create new pipeline client when first marked interested
+        // First time interested — create pipeline client
         newClient = await Client.create({ 
           name: lead.name, phone: lead.phone, email: lead.email, 
           city: lead.city, state: lead.state, category: lead.category, 
@@ -454,31 +454,28 @@ router.post('/leads/:id/log', apiAuth, async (req, res) => {
           type: 'stage_change', title: 'Lead converted to client', description: note||'' 
         });
       } else {
-        // Already a client — just log the activity, don't create duplicate
+        // Was on hold or lost — restore back to interested
         newClient = existingClient;
+        if (['on_hold','lost'].includes(existingClient.pipeline_stage)) {
+          await existingClient.update({ pipeline_stage: 'interested' });
+        }
         await ClientActivity.create({ 
           client_id: existingClient.id, user_id: parseInt(req.session.user.id), 
-          type: 'call', title: 'Lead re-marked as Interested', description: note||'' 
+          type: 'stage_change', title: 'Lead re-marked as Interested — restored to pipeline', description: note||'' 
         });
       }
-    } else if (existingClient && ['called','callback','busy','no_answer','not_interested','invalid'].includes(status)) {
-      // Lead moved back from interested — update pipeline stage so it disappears from active Pipeline/Kanban
-      let newStage = existingClient.pipeline_stage;
-      // Only move back if it's still in early stages (hasn't progressed to meeting/proposal etc)
-      if (['interested','follow_up_1','follow_up_2'].includes(existingClient.pipeline_stage)) {
-        if (status === 'not_interested') {
-          newStage = 'lost'; // Permanently lost
-        } else {
-          newStage = 'follow_up_1'; // Back to follow-up stage — still in pipeline but lower
-        }
+    } else if (existingClient) {
+      // Lead moved back from interested — hide from active Pipeline/Kanban
+      if (['interested','follow_up_1','follow_up_2','follow_up_3','on_hold'].includes(existingClient.pipeline_stage)) {
+        const newStage = status === 'not_interested' ? 'lost' : 'on_hold';
         await existingClient.update({ pipeline_stage: newStage });
+        await ClientActivity.create({ 
+          client_id: existingClient.id, user_id: parseInt(req.session.user.id), 
+          type: 'note', 
+          title: 'Lead status → '+status.replace(/_/g,' ')+' | Pipeline moved to '+newStage, 
+          description: note||'' 
+        });
       }
-      await ClientActivity.create({ 
-        client_id: existingClient.id, user_id: parseInt(req.session.user.id), 
-        type: 'note', 
-        title: 'Lead status changed to: '+status.replace('_',' '), 
-        description: (note||'')+(newStage!==existingClient.pipeline_stage?' | Pipeline moved to '+newStage:'')
-      });
       if (note) await existingClient.update({ notes: note });
     }
 
@@ -581,10 +578,14 @@ router.get('/team/assignment-stats', apiAdmin, async (req, res) => {
 router.get('/clients', apiAuth, async (req, res) => {
   try {
     const user = req.session.user;
-    const { stage, category, search, assigned, priority, page=1, limit=200 } = req.query;
+    const { stage, category, search, assigned, priority, page=1, limit=200, include_hidden } = req.query;
     const where = {};
     if (user.role==='staff') where[Op.or] = [{ assigned_to: parseInt(user.id) }, { managed_by: parseInt(user.id) }];
     if (stage && stage!=='all') where.pipeline_stage = stage;
+    else if (!include_hidden) {
+      // By default hide on_hold from active pipeline/kanban views
+      where.pipeline_stage = { [Op.notIn]: ['on_hold'] };
+    }
     if (category && category!=='all') where.category = category;
     if (priority && priority!=='all') where.priority = priority;
     if (assigned && assigned!=='all' && user.role==='admin') where.assigned_to = parseInt(assigned);
