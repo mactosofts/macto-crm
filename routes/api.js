@@ -246,12 +246,24 @@ router.get('/dashboard/overview', apiAdmin, async (req, res) => {
       include: [{ model: User, as: 'assignedStaff', attributes: ['name'], required: false }]
     });
 
+    // Live staff call activity — last 2 hours
+    const twoHoursAgo = new Date(now.getTime() - 2*60*60*1000);
+    const liveActivity = await CallLog.findAll({
+      where: { call_date: { [Op.gte]: twoHoursAgo } },
+      include: [
+        { model: User, as: 'staff', attributes: ['name','avatar_color'], required: false },
+        { model: Lead, attributes: ['name','phone'], required: false }
+      ],
+      order: [['call_date','DESC']],
+      limit: 30
+    });
+
     res.json({
       ok: true, totalLeads, unassigned, assigned: totalLeads-unassigned, todayLeads,
       totalClients, activeClients, totalRevenue: totalRevenue||0, monthRevenue: monthRevenue||0,
       pendingInvValue: pendingInvValue||0, pendingInvCount, totalCalls, todayCalls, weekCalls,
       pendingTasks, overdueTasks, totalProposals, acceptedProposals, totalInvoices, paidInvoices,
-      staffStats, pipelineByStage, recentActivities, overduefollowups, hotLeads
+      staffStats, pipelineByStage, recentActivities, overduefollowups, hotLeads, liveActivity
     });
   } catch (e) { res.json({ ok: false, error: e.message }); }
 });
@@ -405,14 +417,15 @@ router.delete('/leads/bulk', apiAdmin, async (req, res) => {
 router.post('/leads/:id/log', apiAuth, async (req, res) => {
   try {
     const { status, note, callback_date, not_converted_reason, duration_sec } = req.body;
-    const lead = await Lead.findByPk(req.params.id);
+    const lead = await Lead.findByPk(req.params.id, {
+      attributes: ['id','name','phone','email','city','state','category','source','status','assigned_to','call_count','last_note','callback_date']
+    });
     if (!lead) return res.json({ ok: false, error: 'Not found' });
     const upd = { status, call_count: (lead.call_count||0)+1, last_called_at: new Date() };
     if (note) upd.last_note = note;
     if (callback_date) upd.callback_date = callback_date;
     else if (status !== 'callback') upd.callback_date = null;
     if (not_converted_reason) upd.not_converted_reason = not_converted_reason;
-    // Auto-schedule next-day follow-up when WhatsApp details are sent
     if (status === 'whatsapp_sent') {
       const tomorrow = new Date();
       tomorrow.setDate(tomorrow.getDate() + 1);
@@ -422,12 +435,50 @@ router.post('/leads/:id/log', apiAuth, async (req, res) => {
     const score = calculateLeadScore({ ...lead.toJSON(), ...upd });
     await lead.update({ lead_score: score });
     await CallLog.create({ lead_id: lead.id, staff_id: parseInt(req.session.user.id), status, note, duration_sec: duration_sec||0 });
+
     let newClient = null;
+    // Check if a pipeline client already exists for this lead
+    const existingClient = await Client.findOne({ where: { lead_id: lead.id } });
+
     if (status === 'interested') {
-      newClient = await Client.create({ name: lead.name, phone: lead.phone, email: lead.email, city: lead.city, state: lead.state, category: lead.category, source: lead.source, lead_id: lead.id, assigned_to: lead.assigned_to, pipeline_stage: 'interested' });
-      await ClientActivity.create({ client_id: newClient.id, user_id: parseInt(req.session.user.id), type: 'stage_change', title: 'Lead converted to client', description: note||'' });
+      if (!existingClient) {
+        // Create new pipeline client when first marked interested
+        newClient = await Client.create({ 
+          name: lead.name, phone: lead.phone, email: lead.email, 
+          city: lead.city, state: lead.state, category: lead.category, 
+          source: lead.source, lead_id: lead.id, assigned_to: lead.assigned_to, 
+          pipeline_stage: 'interested' 
+        });
+        await ClientActivity.create({ 
+          client_id: newClient.id, user_id: parseInt(req.session.user.id), 
+          type: 'stage_change', title: 'Lead converted to client', description: note||'' 
+        });
+      } else {
+        // Already a client — just log the activity, don't create duplicate
+        newClient = existingClient;
+        await ClientActivity.create({ 
+          client_id: existingClient.id, user_id: parseInt(req.session.user.id), 
+          type: 'call', title: 'Lead re-marked as Interested', description: note||'' 
+        });
+      }
+    } else if (existingClient && ['called','callback','busy','no_answer'].includes(status)) {
+      // Lead moved back from interested to an earlier stage
+      // Update pipeline client notes and add activity log — DO NOT DELETE (may have payments/proposals linked)
+      await ClientActivity.create({ 
+        client_id: existingClient.id, user_id: parseInt(req.session.user.id), 
+        type: 'note', 
+        title: 'Lead status changed to: '+status.replace('_',' '), 
+        description: note||'' 
+      });
+      // Update client notes with latest info
+      if (note) await existingClient.update({ notes: note });
     }
-    const nextLead = await Lead.findOne({ where: { assigned_to: parseInt(req.session.user.id), status: 'pending', id: { [Op.gt]: lead.id } }, order: [['id','ASC']], attributes: ['id','name','phone','email','city','state','category','business_type','source','status','assigned_to','callback_date','last_note','not_converted_reason','extra','call_count','wa_followup_date','last_called_at','createdAt','updatedAt'] });
+
+    const nextLead = await Lead.findOne({ 
+      where: { assigned_to: parseInt(req.session.user.id), status: 'pending', id: { [Op.gt]: lead.id } }, 
+      order: [['id','ASC']], 
+      attributes: ['id','name','phone','email','city','state','category','business_type','source','status','assigned_to','callback_date','last_note','not_converted_reason','extra','call_count','wa_followup_date','last_called_at','createdAt','updatedAt'] 
+    });
     res.json({ ok: true, nextLead, newClient });
   } catch (e) { res.json({ ok: false, error: e.message }); }
 });
