@@ -1071,7 +1071,10 @@ async function renderAllLeads(container) {
       cb.checked = selectedIds.has(l.id);
       cb.addEventListener('change',()=>{cb.checked?selectedIds.add(l.id):selectedIds.delete(l.id);countSpan.textContent=selectedIds.size+' selected';});
       const tr = el('tr',{},el('td',{},cb),
-        el('td',{},el('div',{className:'td-name'},l.name||'—'),el('div',{className:'td-muted'},l.email||'')),
+        el('td',{},el('div',{style:'display:flex;align-items:center;gap:6px'},
+          el('div',{className:'td-name'},l.name||'—'),
+          l.converted?el('span',{style:'font-size:9px;color:#fff;background:linear-gradient(135deg,#22c55e,#16a34a);padding:1px 6px;border-radius:999px;font-weight:800;flex-shrink:0'},'✓'):null
+        ),el('div',{className:'td-muted'},l.email||'')),
         el('td',{style:'font-family:monospace;font-size:12px;color:var(--muted2)'},l.phone||'—'),
         el('td',{style:'font-size:12px'},catLabel(l.category)),
         el('td',{}),
@@ -2145,7 +2148,7 @@ async function renderDialer(container) {
       const r = await api.post('/leads/'+lead.id+'/log',body);
       if (r.ok) {
         callCount++;
-        if (r.newClient) { const msg=el('div',{className:'alert alert-success'},'⭐ Added to client pipeline!'); dialerWrap.prepend(msg); setTimeout(()=>msg.remove(),2500); }
+        if (r.newClient) { showToast('⭐ '+(r.newClient.name||'Lead')+' converted — now in Pipeline!','success',5000); }
         if (r.nextLead) { currentLead=r.nextLead; showLead(r.nextLead); }
         else { dialerWrap.innerHTML=''; dialerWrap.appendChild(el('div',{style:'text-align:center;padding:40px'},el('div',{style:'font-size:48px'},'🎉'),el('div',{style:'font-size:18px;font-weight:700;margin-top:12px'},'Session complete!'),el('p',{style:'color:var(--muted)'},'Calls this session: '+callCount))); }
       } else { mDiv.className='alert alert-error';mDiv.textContent=r.error;saveBtn.disabled=false;saveBtn.textContent='Save & Next →'; }
@@ -2207,7 +2210,12 @@ async function renderMyLeads(container) {
         document.body.appendChild(activeModal);
       }},
         el('div',{className:'lead-card-top'},
-          el('div',{},el('div',{className:'lead-name'},lead.name||'Unknown'),el('div',{className:'lead-phone'},lead.phone||'—'),lead.city?el('div',{className:'lead-meta'},'📍 '+lead.city):null,lead.category&&lead.category!=='other'?el('div',{className:'lead-meta'},catLabel(lead.category)):null),
+          el('div',{},
+            el('div',{style:'display:flex;align-items:center;gap:6px'},
+              el('div',{className:'lead-name'},lead.name||'Unknown'),
+              lead.converted?el('span',{style:'font-size:10px;color:#fff;background:linear-gradient(135deg,#22c55e,#16a34a);padding:2px 8px;border-radius:999px;font-weight:800'},'✓ Converted'):null
+            ),
+            el('div',{className:'lead-phone'},lead.phone||'—'),lead.city?el('div',{className:'lead-meta'},'📍 '+lead.city):null,lead.category&&lead.category!=='other'?el('div',{className:'lead-meta'},catLabel(lead.category)):null),
           callBadge(lead.status)
         ),
         lead.last_note?el('div',{className:'lead-note'},'📝 '+lead.last_note):null,
@@ -2255,7 +2263,7 @@ function renderCallModal(lead, onSave, onClose) {
     if(selectedStatus==='callback'&&cbDate?.value)body.callback_date=cbDate.value;
     if(selectedStatus==='not_interested'&&niReason?.value)body.not_converted_reason=niReason.value;
     const r=await api.post('/leads/'+lead.id+'/log',body);
-    if(r.ok){if(r.newClient){const msg=el('div',{className:'alert alert-success'},'⭐ Added to pipeline!');modal.querySelector('.modal').prepend(msg);setTimeout(()=>msg.remove(),2000);}onSave(lead);}
+    if(r.ok){if(r.newClient){showToast('⭐ '+(r.newClient.name||lead.name||'Lead')+' converted — now in Pipeline!','success',5000);}onSave(lead);}
     else{mDiv.className='alert alert-error';mDiv.textContent=r.error;saveBtn.disabled=false;saveBtn.textContent='Save & Update';}
   }},'Save & Update');
 
@@ -2583,6 +2591,9 @@ async function renderAdminFollowups(container, isStaffView=false) {
   const interestedLeads = interestedR.ok ? interestedR.data : [];
   const busyLeads = busyR.ok ? busyR.data : [];
   const notInterestedLeads = notInterestedR.ok ? notInterestedR.data : [];
+  // Build map of lead_id -> client, to detect leads that ALREADY have a pipeline client (avoid duplicates)
+  const clientByLeadId = {};
+  clients.forEach(c=>{ if(c.lead_id) clientByLeadId[c.lead_id] = c; });
   const today = new Date().toISOString().slice(0,10);
   const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate()+1);
   const tomorrowStr = tomorrow.toISOString().slice(0,10);
@@ -2699,6 +2710,23 @@ async function renderAdminFollowups(container, isStaffView=false) {
     return u ? u.name : 'Unknown';
   }
 
+  function getStaffDetail(assigned_to) {
+    if(!assigned_to) return null;
+    return users.find(u=>u.id===assigned_to||u.id===parseInt(assigned_to)) || null;
+  }
+
+  function staffBadge(assigned_to) {
+    const u = getStaffDetail(assigned_to);
+    if(!u) return el('span',{style:'font-size:11px;color:#ef4444;background:rgba(239,68,68,0.1);padding:2px 7px;border-radius:4px;font-weight:600'},'⚠️ Unassigned');
+    return el('span',{style:`font-size:11px;color:${u.avatar_color||'#6366f1'};background:${u.avatar_color||'#6366f1'}15;padding:2px 8px;border-radius:4px;font-weight:700;display:inline-flex;align-items:center;gap:4px`},
+      '👤 '+u.name+(u.role?' ('+u.role.charAt(0).toUpperCase()+u.role.slice(1)+')':'')
+    );
+  }
+
+  function convertedBadge() {
+    return el('span',{style:'font-size:11px;color:#fff;background:linear-gradient(135deg,#22c55e,#16a34a);padding:3px 9px;border-radius:999px;font-weight:800;display:inline-flex;align-items:center;gap:3px'},'✓ Converted');
+  }
+
   function getDaysOverdue(dateStr) {
     if(!dateStr) return 0;
     const diff = Math.floor((new Date(today)-new Date(dateStr))/(1000*60*60*24));
@@ -2708,7 +2736,6 @@ async function renderAdminFollowups(container, isStaffView=false) {
   function refreshAll() { renderAdminFollowups(container,isStaffView); }
 
   function renderLeadCard(l, borderColor) {
-    const staff = getStaffName(l.assigned_to);
     const daysOverdue = getDaysOverdue(l.callback_date);
     const attempts = l.call_count||0;
     const needsEscalation = attempts >= 3;
@@ -2722,14 +2749,15 @@ async function renderAdminFollowups(container, isStaffView=false) {
     });
     card.appendChild(el('div',{style:'display:flex;justify-content:space-between;align-items:flex-start;gap:10px'},
       el('div',{style:'flex:1'},
-        el('div',{style:'display:flex;align-items:center;gap:8px'},
+        el('div',{style:'display:flex;align-items:center;gap:8px;flex-wrap:wrap'},
           el('div',{style:'font-weight:700;font-size:14px'},l.name||'Unknown'),
+          l.converted?convertedBadge():null,
           attempts>0?el('span',{style:`font-size:10px;font-weight:800;padding:1px 7px;border-radius:999px;background:${needsEscalation?'#ef444422':'var(--bg4)'};color:${needsEscalation?'#ef4444':'var(--muted2)'}`},'📞×'+String(attempts)):null,
           needsEscalation?el('span',{style:'font-size:10px;font-weight:800;padding:1px 7px;border-radius:999px;background:#ef444422;color:#ef4444'},'⚠️ ESCALATE'):null
         ),
         el('div',{style:'font-family:monospace;color:var(--muted2);font-size:13px;margin-top:2px'},l.phone||'—'),
         el('div',{style:'display:flex;gap:8px;margin-top:6px;flex-wrap:wrap'},
-          el('span',{style:'font-size:11px;color:var(--muted2);background:var(--bg4);padding:2px 7px;border-radius:4px'},'👤 '+staff),
+          staffBadge(l.assigned_to),
           catLabel(l.category)?el('span',{style:'font-size:11px;color:var(--muted2);background:var(--bg4);padding:2px 7px;border-radius:4px'},catLabel(l.category)):null,
           l.source?el('span',{style:'font-size:11px;color:var(--muted2);background:var(--bg4);padding:2px 7px;border-radius:4px'},l.source):null,
           (l.call_count||0)>=3?el('span',{style:'font-size:11px;color:#fff;background:#ef4444;padding:2px 8px;border-radius:4px;font-weight:700'},'⚠️ '+String(l.call_count)+' attempts'):
@@ -2747,18 +2775,19 @@ async function renderAdminFollowups(container, isStaffView=false) {
 
   // INTERESTED lead — needs next action: move to pipeline, schedule demo, send proposal
   function renderInterestedCard(l) {
-    const staff = getStaffName(l.assigned_to);
     const attempts = l.call_count||0;
+    const existingClient = clientByLeadId[l.id];
     const card = el('div',{style:'background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:14px;border-left:4px solid #22c55e;transition:all 0.15s;margin-bottom:8px'});
     card.appendChild(el('div',{style:'display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:10px'},
       el('div',{style:'flex:1'},
-        el('div',{style:'display:flex;align-items:center;gap:8px'},
+        el('div',{style:'display:flex;align-items:center;gap:8px;flex-wrap:wrap'},
           el('div',{style:'font-weight:700;font-size:14px'},l.name||'Unknown'),
+          existingClient?convertedBadge():null,
           attempts>0?el('span',{style:'font-size:10px;font-weight:800;padding:1px 7px;border-radius:999px;background:var(--bg4);color:var(--muted2)'},'📞×'+String(attempts)):null
         ),
         el('div',{style:'font-family:monospace;color:var(--muted2);font-size:13px;margin-top:2px'},l.phone||'—'),
         el('div',{style:'display:flex;gap:8px;margin-top:6px;flex-wrap:wrap'},
-          el('span',{style:'font-size:11px;color:var(--muted2);background:var(--bg4);padding:2px 7px;border-radius:4px'},'👤 '+staff),
+          staffBadge(l.assigned_to),
           catLabel(l.category)?el('span',{style:'font-size:11px;color:var(--muted2);background:var(--bg4);padding:2px 7px;border-radius:4px'},catLabel(l.category)):null,
           (l.call_count||0)>=3?el('span',{style:'font-size:11px;color:#fff;background:#ef4444;padding:2px 8px;border-radius:4px;font-weight:700'},'⚠️ '+String(l.call_count)+' attempts'):null
         ),
@@ -2772,11 +2801,18 @@ async function renderAdminFollowups(container, isStaffView=false) {
     actRow.appendChild(el('button',{className:'btn btn-cyan btn-xs',onClick:()=>{
       openWhatsAppModal(l.phone, null, l.name, refreshAll);
     }},'💬 WhatsApp'));
-    actRow.appendChild(el('button',{className:'btn btn-primary btn-xs',onClick:async()=>{
-      const r = await api.post('/clients',{name:l.name,phone:l.phone,email:l.email,city:l.city,category:l.category,source:l.source,assigned_to:l.assigned_to,pipeline_stage:'interested',notes:'Manually moved from Follow-ups → Interested lead, lead_id:'+l.id});
-      if(r.ok){showToast('✅ Moved to Pipeline as client!','success');refreshAll();}
-      else showToast('❌ '+r.error,'error');
-    }},'➡️ Move to Pipeline'));
+    if(existingClient){
+      // Already has a pipeline client — never create a duplicate, just open it
+      actRow.appendChild(el('button',{className:'btn btn-primary btn-xs',onClick:()=>{
+        openClientModal(existingClient, users, refreshAll);
+      }},'✅ View in Pipeline'));
+    } else {
+      actRow.appendChild(el('button',{className:'btn btn-primary btn-xs',onClick:async()=>{
+        const r = await api.post('/clients',{name:l.name,phone:l.phone,email:l.email,city:l.city,category:l.category,source:l.source,assigned_to:l.assigned_to,pipeline_stage:'interested',lead_id:l.id,notes:'Manually moved from Follow-ups → Interested lead'});
+        if(r.ok){showToast('⭐ '+(l.name||'Lead')+' converted — now in Pipeline!','success',5000);refreshAll();}
+        else showToast('❌ '+r.error,'error');
+      }},'➡️ Move to Pipeline'));
+    }
     actRow.appendChild(el('button',{className:'btn btn-ghost btn-xs',onClick:()=>{
       if(activeModal)activeModal.remove();
       activeModal=renderCallModal(l,()=>{activeModal&&activeModal.remove();activeModal=null;refreshAll();},()=>{activeModal&&activeModal.remove();activeModal=null;});
@@ -2788,7 +2824,6 @@ async function renderAdminFollowups(container, isStaffView=false) {
 
   // BUSY lead that needs recontact after waiting period
   function renderBusyCard(l) {
-    const staff = getStaffName(l.assigned_to);
     const lastCalled = l.last_called_at || l.updatedAt || l.createdAt;
     const daysSince = lastCalled ? Math.floor((new Date() - new Date(lastCalled)) / (1000*60*60*24)) : 0;
     const card = el('div',{style:'background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:14px;border-left:4px solid #8b5cf6;cursor:pointer;transition:all 0.15s;margin-bottom:8px'});
@@ -2801,10 +2836,13 @@ async function renderAdminFollowups(container, isStaffView=false) {
     });
     card.appendChild(el('div',{style:'display:flex;justify-content:space-between;align-items:flex-start;gap:10px'},
       el('div',{style:'flex:1'},
-        el('div',{style:'font-weight:700;font-size:14px'},l.name||'Unknown'),
+        el('div',{style:'display:flex;align-items:center;gap:8px;flex-wrap:wrap'},
+          el('div',{style:'font-weight:700;font-size:14px'},l.name||'Unknown'),
+          l.converted?convertedBadge():null
+        ),
         el('div',{style:'font-family:monospace;color:var(--muted2);font-size:13px;margin-top:2px'},l.phone||'—'),
         el('div',{style:'display:flex;gap:8px;margin-top:6px;flex-wrap:wrap'},
-          el('span',{style:'font-size:11px;color:var(--muted2);background:var(--bg4);padding:2px 7px;border-radius:4px'},'👤 '+staff),
+          staffBadge(l.assigned_to),
           el('span',{style:'font-size:11px;color:#8b5cf6;background:rgba(139,92,246,0.12);padding:2px 7px;border-radius:4px'},'😴 Was Busy'),
           (l.call_count||0)>=3?el('span',{style:'font-size:11px;color:#fff;background:#ef4444;padding:2px 8px;border-radius:4px;font-weight:700'},'⚠️ '+String(l.call_count)+' attempts'):null
         )
@@ -2819,14 +2857,13 @@ async function renderAdminFollowups(container, isStaffView=false) {
 
   // NOT INTERESTED — shown only when toggled, with reason
   function renderNotInterestedCard(l) {
-    const staff = getStaffName(l.assigned_to);
     const card = el('div',{style:'background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:14px;border-left:4px solid #ef4444;margin-bottom:8px;opacity:0.85'});
     card.appendChild(el('div',{style:'display:flex;justify-content:space-between;align-items:flex-start;gap:10px'},
       el('div',{style:'flex:1'},
         el('div',{style:'font-weight:700;font-size:14px'},l.name||'Unknown'),
         el('div',{style:'font-family:monospace;color:var(--muted2);font-size:13px;margin-top:2px'},l.phone||'—'),
         el('div',{style:'display:flex;gap:8px;margin-top:6px'},
-          el('span',{style:'font-size:11px;color:var(--muted2);background:var(--bg4);padding:2px 7px;border-radius:4px'},'👤 '+staff)
+          staffBadge(l.assigned_to)
         ),
         l.not_converted_reason?el('div',{style:'color:#f87171;font-size:11px;margin-top:6px;font-style:italic'},'❌ Reason: '+l.not_converted_reason):null
       ),
@@ -4271,7 +4308,7 @@ function renderAdsLeadModal(lead, onSave, onClose) {
     if(selectedStatus==='not_interested'&&niReason?.value) body.not_converted_reason=niReason.value;
     const r = await api.post('/leads/'+lead.id+'/log', body);
     if(r.ok){
-      if(r.newClient){mDiv.className='alert alert-success';mDiv.textContent='⭐ Added to client pipeline!';setTimeout(()=>onSave(),1000);}
+      if(r.newClient){showToast('⭐ '+(r.newClient.name||lead.name||'Lead')+' converted — now in Pipeline!','success',5000);setTimeout(()=>onSave(),500);}
       else onSave();
     } else {mDiv.className='alert alert-error';mDiv.textContent=r.error;saveBtn.disabled=false;saveBtn.textContent='Save Update';}
   }},'Save Update');
