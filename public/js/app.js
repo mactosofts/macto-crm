@@ -64,22 +64,34 @@ let STATE = { user: null, tab: 'dashboard' };
 // ── HELPERS ──────────────────────────────────────────────────────
 const api = {
   async call(method, path, body) {
-    const opts = { method, headers: {'Content-Type':'application/json'}, credentials:'include' };
-    if (body) opts.body = JSON.stringify(body);
-    const r = await fetch('/api'+path, opts);
-    return r.json();
+    try {
+      const opts = { method, headers: {'Content-Type':'application/json'}, credentials:'include' };
+      if (body) opts.body = JSON.stringify(body);
+      const r = await fetch('/api'+path, opts);
+      try {
+        return await r.json();
+      } catch(parseErr) {
+        return { ok:false, error: 'Server error (status '+r.status+')' };
+      }
+    } catch(networkErr) {
+      return { ok:false, error: 'Network error: '+networkErr.message };
+    }
   },
   get: p => api.call('GET', p),
   post: (p,b) => api.call('POST', p, b),
   put: (p,b) => api.call('PUT', p, b),
   del: p => api.call('DELETE', p),
   async upload(path, fd) {
-    const r = await fetch('/api'+path, { method:'POST', body:fd, credentials:'include' });
-    return r.json();
+    try {
+      const r = await fetch('/api'+path, { method:'POST', body:fd, credentials:'include' });
+      try { return await r.json(); } catch(e) { return { ok:false, error:'Server error' }; }
+    } catch(e) { return { ok:false, error: e.message }; }
   },
   async delBody(path, body) {
-    const r = await fetch('/api'+path, { method:'DELETE', headers:{'Content-Type':'application/json'}, credentials:'include', body: JSON.stringify(body) });
-    return r.json();
+    try {
+      const r = await fetch('/api'+path, { method:'DELETE', headers:{'Content-Type':'application/json'}, credentials:'include', body: JSON.stringify(body) });
+      try { return await r.json(); } catch(e) { return { ok:false, error:'Server error' }; }
+    } catch(e) { return { ok:false, error: e.message }; }
   }
 };
 
@@ -325,6 +337,7 @@ function renderApp() {
 
     // Route
     const tab = STATE.tab;
+    try {
     if (isAdmin) {
       if (tab==='dashboard') await renderDashboard(main);
       else if (tab==='assign_leads') await renderAssignLeads(main);
@@ -368,6 +381,13 @@ function renderApp() {
       else if (tab==='new_audit') renderNewAudit(main);
       else if (tab==='my_audits') await renderAudits(main);
       else if (tab==='password') renderPassword(main);
+    }
+    } catch(routeErr) {
+      console.error('Route render error for tab '+tab+':', routeErr);
+      main.innerHTML = '';
+      main.appendChild(el('div',{className:'page-title'},'⚠️ Page Error'));
+      main.appendChild(el('div',{className:'alert alert-error'},'Failed to load this page: '+routeErr.message));
+      main.appendChild(el('button',{className:'btn btn-primary',onClick:()=>render()},'🔄 Retry'));
     }
   });
   return shell;
@@ -738,6 +758,7 @@ async function renderDashboard(container) {
 // ── STAFF DASHBOARD ──────────────────────────────────────────────
 async function renderStaffDash(container) {
   container.innerHTML = loading();
+  try {
   // Fetch fresh user data to get latest daily_target
   const [statsR, meR, clientsR, tasksR, alertsR, callbacksR] = await Promise.all([
     api.get('/leads/stats'),
@@ -858,6 +879,13 @@ async function renderStaffDash(container) {
       ));
     });
     container.appendChild(cCard);
+  }
+  } catch(err) {
+    container.innerHTML = '';
+    container.appendChild(el('div',{className:'page-title'},'🏠 My Dashboard'));
+    container.appendChild(el('div',{className:'alert alert-error'},'Dashboard error: '+err.message));
+    container.appendChild(el('button',{className:'btn btn-primary',onClick:()=>renderStaffDash(container)},'🔄 Retry'));
+    console.error('Staff Dashboard Error:', err);
   }
 }
 
