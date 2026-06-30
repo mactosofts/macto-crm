@@ -299,6 +299,15 @@ router.get('/leads/stats', apiAuth, async (req, res) => {
   } catch (e) { res.json({ ok: false, error: e.message }); }
 });
 
+router.get('/leads/wa-followups', apiAuth, async (req, res) => {
+  try {
+    const where = { status: 'whatsapp_sent' };
+    if (req.session.user.role === 'staff') where.assigned_to = parseInt(req.session.user.id);
+    const leads = await Lead.findAll({ where, order: [['wa_followup_date','ASC']], include: [{ model: User, as: 'assignedStaff', attributes: ['name'], required: false }] });
+    res.json({ ok: true, data: leads, count: leads.length });
+  } catch (e) { res.json({ ok: false, error: e.message }); }
+});
+
 router.get('/leads/callbacks-due', apiAuth, async (req, res) => {
   try {
     const today = new Date().toISOString().slice(0,10);
@@ -392,6 +401,12 @@ router.post('/leads/:id/log', apiAuth, async (req, res) => {
     if (callback_date) upd.callback_date = callback_date;
     else if (status !== 'callback') upd.callback_date = null;
     if (not_converted_reason) upd.not_converted_reason = not_converted_reason;
+    // Auto-schedule next-day follow-up when WhatsApp details are sent
+    if (status === 'whatsapp_sent') {
+      const tomorrow = new Date();
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      upd.wa_followup_date = tomorrow.toISOString().slice(0,10);
+    }
     await lead.update(upd);
     const score = calculateLeadScore({ ...lead.toJSON(), ...upd });
     await lead.update({ lead_score: score });
