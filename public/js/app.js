@@ -180,8 +180,9 @@ async function boot() {
   const r = await api.get('/me');
   if (r.ok) STATE.user = r.user;
   render();
-  // Check for callback due alerts
+
   if(r.ok && r.user.role === 'staff') {
+    // Check for callback due alerts
     setTimeout(async()=>{
       const cb = await api.get('/leads/callbacks-due');
       if(cb.ok && cb.count > 0) {
@@ -193,7 +194,54 @@ async function boot() {
         }
       }
     }, 2000);
+
+    // Show clock-in prompt if not already clocked in today
+    setTimeout(async()=>{
+      const wr = await api.get('/work/today');
+      if(wr.ok && !wr.data) {
+        // Not clocked in — show prompt modal
+        showClockInPrompt();
+      }
+    }, 1000);
+
+    // Auto clock-out when tab/browser closes
+    window.addEventListener('beforeunload', ()=>{
+      navigator.sendBeacon('/api/work/logout', JSON.stringify({}));
+    });
   }
+}
+
+function showClockInPrompt() {
+  const existing = document.querySelector('.clockin-modal');
+  if(existing) return;
+  const modal = el('div',{className:'modal-overlay center clockin-modal'});
+  const box = el('div',{className:'modal center-modal',style:'max-width:360px;padding:28px;text-align:center'});
+  box.appendChild(el('div',{style:'font-size:40px;margin-bottom:12px'},'⏰'));
+  box.appendChild(el('div',{style:'font-size:18px;font-weight:800;margin-bottom:6px'},'Good '+getGreeting()+', '+STATE.user.name+'!'));
+  box.appendChild(el('div',{style:'color:var(--muted2);font-size:13px;margin-bottom:20px'},"Don't forget to clock in before starting work."));
+  const clockInBtn = el('button',{className:'btn btn-success btn-lg',style:'width:100%;justify-content:center;margin-bottom:10px',onClick:async()=>{
+    clockInBtn.disabled=true; clockInBtn.textContent='Clocking in…';
+    const r = await api.post('/work/login',{});
+    if(r.ok){
+      showToast('✅ Clocked in successfully!','success');
+      modal.remove();
+    } else {
+      showToast('❌ '+r.error,'error');
+      clockInBtn.disabled=false; clockInBtn.textContent='✅ Clock In Now';
+    }
+  }},'✅ Clock In Now');
+  const skipBtn = el('button',{className:'btn btn-ghost',style:'width:100%;justify-content:center',onClick:()=>modal.remove()},'Skip for now');
+  box.appendChild(clockInBtn);
+  box.appendChild(skipBtn);
+  modal.appendChild(box);
+  document.body.appendChild(modal);
+}
+
+function getGreeting() {
+  const h = new Date().getHours();
+  if(h < 12) return 'Morning';
+  if(h < 17) return 'Afternoon';
+  return 'Evening';
 }
 
 function render() {
@@ -517,7 +565,7 @@ async function renderDashboard(container) {
     {l:'Assigned',v:r.assigned||0,c:'#3b82f6'},
     {l:'Called',v:r.totalCalls||0,c:'#06b6d4'},
     {l:'Interested',v:r.staffStats?r.staffStats.reduce((s,x)=>s+(x.interested||0),0):0,c:'#22c55e'},
-    {l:'Converted',v:r.totalClients||0,c:'#4ade80'},
+    {l:'In Pipeline',v:r.activeClients||0,c:'#4ade80'},
   ];
   funnelSteps.forEach((step,i)=>{
     const pct = Math.round((step.v/total)*100);
