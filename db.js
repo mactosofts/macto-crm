@@ -95,7 +95,7 @@ const ClientActivity = sequelize.define('ClientActivity', {
   date:        { type: DataTypes.DATE, defaultValue: DataTypes.NOW },
   next_action: { type: DataTypes.STRING(255) },
   next_date:   { type: DataTypes.DATEONLY, allowNull: true },
-}, { tableName: 'client_activities', timestamps: false });
+}, { tableName: 'client_activities', timestamps: false, indexes: [] });
 
 // ── CALL LOGS ─────────────────────────────────────────────────────
 const CallLog = sequelize.define('CallLog', {
@@ -106,7 +106,7 @@ const CallLog = sequelize.define('CallLog', {
   note:          { type: DataTypes.TEXT },
   duration_sec:  { type: DataTypes.INTEGER, defaultValue: 0 },
   call_date:     { type: DataTypes.DATE, defaultValue: DataTypes.NOW },
-}, { tableName: 'call_logs', timestamps: false });
+}, { tableName: 'call_logs', timestamps: false, indexes: [] });
 
 // ── AUDITS ────────────────────────────────────────────────────────
 const Audit = sequelize.define('Audit', {
@@ -125,7 +125,7 @@ const Audit = sequelize.define('Audit', {
   notes:                  { type: DataTypes.TEXT },
   client_id:              { type: DataTypes.INTEGER, allowNull: true },
   audit_date:             { type: DataTypes.DATE, defaultValue: DataTypes.NOW },
-}, { tableName: 'audits', timestamps: true });
+}, { tableName: 'audits', timestamps: true, indexes: [] });
 
 // ── TASKS ─────────────────────────────────────────────────────────
 const Task = sequelize.define('Task', {
@@ -139,7 +139,7 @@ const Task = sequelize.define('Task', {
   priority:     { type: DataTypes.ENUM('low','medium','high','urgent'), defaultValue: 'medium' },
   status:       { type: DataTypes.ENUM('pending','in_progress','done','cancelled'), defaultValue: 'pending' },
   completed_at: { type: DataTypes.DATE, allowNull: true },
-}, { tableName: 'tasks', timestamps: true });
+}, { tableName: 'tasks', timestamps: true, indexes: [] });
 
 // ── INVOICES ──────────────────────────────────────────────────────
 const Invoice = sequelize.define('Invoice', {
@@ -160,7 +160,7 @@ const Invoice = sequelize.define('Invoice', {
   due_date:     { type: DataTypes.DATEONLY, allowNull: true },
   notes:        { type: DataTypes.TEXT },
   paid_at:      { type: DataTypes.DATE, allowNull: true },
-}, { tableName: 'invoices', timestamps: true });
+}, { tableName: 'invoices', timestamps: true, indexes: [] });
 
 // ── PROPOSALS ─────────────────────────────────────────────────────
 const Proposal = sequelize.define('Proposal', {
@@ -183,7 +183,7 @@ const Proposal = sequelize.define('Proposal', {
   status:               { type: DataTypes.ENUM('draft','sent','accepted','rejected','revised'), defaultValue: 'draft' },
   sent_at:              { type: DataTypes.DATE, allowNull: true },
   accepted_at:          { type: DataTypes.DATE, allowNull: true },
-}, { tableName: 'proposals', timestamps: true });
+}, { tableName: 'proposals', timestamps: true, indexes: [] });
 
 // ── NOTIFICATIONS ─────────────────────────────────────────────────
 const Notification = sequelize.define('Notification', {
@@ -194,7 +194,7 @@ const Notification = sequelize.define('Notification', {
   type:    { type: DataTypes.ENUM('task','client','lead','invoice','system','callback','reminder'), defaultValue: 'system' },
   read:    { type: DataTypes.BOOLEAN, defaultValue: false },
   link:    { type: DataTypes.STRING(255), allowNull: true },
-}, { tableName: 'notifications', timestamps: true });
+}, { tableName: 'notifications', timestamps: true, indexes: [] });
 
 // ── BULK WA CAMPAIGNS ─────────────────────────────────────────────
 const WACampaign = sequelize.define('WACampaign', {
@@ -211,7 +211,7 @@ const WACampaign = sequelize.define('WACampaign', {
   status:       { type: DataTypes.ENUM('draft','running','completed','failed'), defaultValue: 'draft' },
   started_at:   { type: DataTypes.DATE, allowNull: true },
   completed_at: { type: DataTypes.DATE, allowNull: true },
-}, { tableName: 'wa_campaigns', timestamps: true });
+}, { tableName: 'wa_campaigns', timestamps: true, indexes: [] });
 
 // ── ASSOCIATIONS ──────────────────────────────────────────────────
 Lead.belongsTo(User, { as: 'assignedStaff', foreignKey: 'assigned_to' });
