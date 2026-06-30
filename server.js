@@ -23,7 +23,23 @@ app.use(express.static(path.join(__dirname, 'public'), {
 
 async function init() {
   try {
-    // One-time cleanup: drop excess indexes that accumulated from previous alter:true deploys
+    // One-time cleanup: fix old clients stuck at 'interested' whose lead is no longer interested
+    try {
+      const [stuckClients] = await sequelize.query(`
+        SELECT c.id FROM clients c 
+        INNER JOIN leads l ON c.lead_id = l.id 
+        WHERE c.pipeline_stage = 'interested' 
+        AND l.status NOT IN ('interested')
+        AND l.status IS NOT NULL
+      `);
+      if(stuckClients.length) {
+        const ids = stuckClients.map(r=>r.id);
+        await sequelize.query(`UPDATE clients SET pipeline_stage = 'on_hold' WHERE id IN (${ids.join(',')})`);
+        console.log(`✅ Fixed ${stuckClients.length} stuck client(s) moved to on_hold`);
+      } else {
+        console.log('✅ No stuck clients found');
+      }
+    } catch(e) { console.log('Cleanup note:', e.message); }
     try {
       const [indexes] = await sequelize.query(`
         SELECT INDEX_NAME FROM information_schema.STATISTICS
