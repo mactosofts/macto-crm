@@ -2693,7 +2693,7 @@ async function renderAdminFollowups(container, isStaffView=false) {
   const interestedLeads = interestedR.ok ? interestedR.data : [];
   const busyLeads = busyR.ok ? busyR.data : [];
   const notInterestedLeads = notInterestedR.ok ? notInterestedR.data : [];
-  // Build map of lead_id -> client, to detect leads that ALREADY have a pipeline client (avoid duplicates)
+  // Build map of lead_id -> client, to detect leads that ALREADY have a pipeline client
   const clientByLeadId = {};
   clients.forEach(c=>{ if(c.lead_id) clientByLeadId[c.lead_id] = c; });
   const today = new Date().toISOString().slice(0,10);
@@ -2701,6 +2701,41 @@ async function renderAdminFollowups(container, isStaffView=false) {
   const tomorrowStr = tomorrow.toISOString().slice(0,10);
   const next7 = new Date(); next7.setDate(next7.getDate()+7);
   const next7Str = next7.toISOString().slice(0,10);
+
+  // ── ALL COMPUTED VARIABLES (must be before any rendering) ────────
+  function getBusyRecontactList(items) {
+    return items.filter(l=>{
+      const lastCalled = l.last_called_at || l.updatedAt || l.createdAt;
+      if(!lastCalled) return true;
+      return Math.floor((new Date()-new Date(lastCalled))/(1000*60*60*24)) >= 2;
+    });
+  }
+
+  const overdueLeads      = leads.filter(l=>l.callback_date&&l.callback_date<today);
+  const todayLeads        = leads.filter(l=>l.callback_date===today);
+  const tomorrowLeads     = leads.filter(l=>l.callback_date===tomorrowStr);
+  const next7Leads        = leads.filter(l=>l.callback_date&&l.callback_date>today&&l.callback_date<=next7Str);
+  const overdueClients    = clients.filter(c=>c.next_followup&&c.next_followup<today&&!['completed','lost'].includes(c.pipeline_stage));
+  const todayClients      = clients.filter(c=>c.next_followup===today&&!['completed','lost'].includes(c.pipeline_stage));
+  const upcomingClients   = clients.filter(c=>c.next_followup&&c.next_followup>today&&!['completed','lost'].includes(c.pipeline_stage));
+  const busyNeedsRecontact = getBusyRecontactList(busyLeads);
+  const interestedNoClient = interestedLeads;
+
+  // Correct deduplicated total
+  const followupKeys = new Set();
+  overdueLeads.forEach(l=>followupKeys.add('lead-'+l.id));
+  todayLeads.forEach(l=>followupKeys.add('lead-'+l.id));
+  tomorrowLeads.forEach(l=>followupKeys.add('lead-'+l.id));
+  next7Leads.forEach(l=>followupKeys.add('lead-'+l.id));
+  interestedNoClient.forEach(l=>followupKeys.add('lead-'+l.id));
+  busyNeedsRecontact.forEach(l=>followupKeys.add('lead-'+l.id));
+  overdueClients.forEach(c=>followupKeys.add('client-'+c.id));
+  todayClients.forEach(c=>followupKeys.add('client-'+c.id));
+  upcomingClients.forEach(c=>followupKeys.add('client-'+c.id));
+  waFollowups.forEach(l=>followupKeys.add('wa-'+l.id));
+  const totalUniqueFollowups = followupKeys.size;
+
+  // ── NOW RENDER (all variables defined above) ─────────────────────
   container.innerHTML = '';
 
   // Header
@@ -2717,7 +2752,7 @@ async function renderAdminFollowups(container, isStaffView=false) {
   let showNotInterested = false;
   const staffUsers = users.filter(u=>u.role==='staff');
 
-  // 3-category quick summary banner - shows most urgent numbers
+  // 3-category quick summary banner
   const urgentCallbacks = overdueLeads.length + todayLeads.length;
   const summaryBanner = el('div',{style:'display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px'});
   [
@@ -2746,54 +2781,18 @@ async function renderAdminFollowups(container, isStaffView=false) {
     container.appendChild(filterBar);
   }
 
-  // Busy leads that have waited 2+ days reappear as "needs recontact"
-  const BUSY_RECONTACT_DAYS = 2;
-  function getBusyRecontactList(items) {
-    return items.filter(l=>{
-      const lastCalled = l.last_called_at || l.updatedAt || l.createdAt;
-      if(!lastCalled) return true;
-      const daysSince = Math.floor((new Date() - new Date(lastCalled)) / (1000*60*60*24));
-      return daysSince >= BUSY_RECONTACT_DAYS;
-    });
-  }
-
-  // Summary KPI cards
-  const overdueLeads = leads.filter(l=>l.callback_date&&l.callback_date<today);
-  const todayLeads = leads.filter(l=>l.callback_date===today);
-  const tomorrowLeads = leads.filter(l=>l.callback_date===tomorrowStr);
-  const next7Leads = leads.filter(l=>l.callback_date&&l.callback_date>today&&l.callback_date<=next7Str);
-  const overdueClients = clients.filter(c=>c.next_followup&&c.next_followup<today&&!['completed','lost'].includes(c.pipeline_stage));
-  const todayClients = clients.filter(c=>c.next_followup===today&&!['completed','lost'].includes(c.pipeline_stage));
-  const upcomingClients = clients.filter(c=>c.next_followup&&c.next_followup>today&&!['completed','lost'].includes(c.pipeline_stage));
-  const busyNeedsRecontact = getBusyRecontactList(busyLeads);
-  const interestedNoClient = interestedLeads; // interested leads that haven't been pushed to pipeline yet
-
-  // Build a true deduplicated set of "needs follow-up" items by unique key (no double counting)
-  // Correct total: every unique lead/client that needs action
-  const followupKeys = new Set();
-  overdueLeads.forEach(l=>followupKeys.add('lead-'+l.id));
-  todayLeads.forEach(l=>followupKeys.add('lead-'+l.id));
-  tomorrowLeads.forEach(l=>followupKeys.add('lead-'+l.id));
-  next7Leads.forEach(l=>followupKeys.add('lead-'+l.id));
-  interestedNoClient.forEach(l=>followupKeys.add('lead-'+l.id));
-  busyNeedsRecontact.forEach(l=>followupKeys.add('lead-'+l.id));
-  overdueClients.forEach(c=>followupKeys.add('client-'+c.id));
-  todayClients.forEach(c=>followupKeys.add('client-'+c.id));
-  upcomingClients.forEach(c=>followupKeys.add('client-'+c.id));
-  waFollowups.forEach(l=>followupKeys.add('wa-'+l.id));
-  const totalUniqueFollowups = followupKeys.size;
-
+  // KPI grid
   const kpiGrid = el('div',{style:'display:grid;grid-template-columns:repeat(auto-fill,minmax(145px,1fr));gap:12px;margin-bottom:20px'});
   [
-    {l:'🔴 Overdue Callbacks',v:overdueLeads.length,c:'#ef4444',click:'overdue'},
-    {l:'🟡 Today Callbacks',v:todayLeads.length,c:'#fbbf24',click:'today'},
-    {l:'🕐 Tomorrow Callbacks',v:tomorrowLeads.length,c:'#fb923c',click:'tomorrow'},
-    {l:'📅 This Week',v:next7Leads.length,c:'#8b5cf6',click:'week'},
-    {l:'⭐ Interested',v:interestedNoClient.length,c:'#22c55e',click:'interested'},
-    {l:'😴 Busy Recontact',v:busyNeedsRecontact.length,c:'#8b5cf6',click:'busy'},
-    {l:'💬 WhatsApp Follow-up',v:waFollowups.length,c:'#25d166',click:'wa'},
-    {l:'👥 Client Follow-ups',v:overdueClients.length+todayClients.length+upcomingClients.length,c:'#06b6d4',click:'clients'},
-    {l:'📋 TOTAL Follow-ups',v:totalUniqueFollowups,c:'#6366f1',click:''},
+    {l:'🔴 Overdue Callbacks',v:overdueLeads.length,c:'#ef4444'},
+    {l:'🟡 Today Callbacks',v:todayLeads.length,c:'#fbbf24'},
+    {l:'🕐 Tomorrow Callbacks',v:tomorrowLeads.length,c:'#fb923c'},
+    {l:'📅 This Week',v:next7Leads.length,c:'#8b5cf6'},
+    {l:'⭐ Interested',v:interestedNoClient.length,c:'#22c55e'},
+    {l:'😴 Busy Recontact',v:busyNeedsRecontact.length,c:'#8b5cf6'},
+    {l:'💬 WhatsApp Follow-up',v:waFollowups.length,c:'#25d166'},
+    {l:'👥 Client Follow-ups',v:overdueClients.length+todayClients.length+upcomingClients.length,c:'#06b6d4'},
+    {l:'📋 TOTAL Follow-ups',v:totalUniqueFollowups,c:'#6366f1'},
   ].forEach(k=>{
     const card = el('div',{style:`background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:14px;border-left:4px solid ${k.c};cursor:pointer;transition:all 0.2s`});
     card.addEventListener('mouseenter',()=>{card.style.transform='translateY(-2px)';card.style.boxShadow=`0 4px 16px ${k.c}22`;});
