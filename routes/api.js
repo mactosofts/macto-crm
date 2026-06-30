@@ -461,16 +461,24 @@ router.post('/leads/:id/log', apiAuth, async (req, res) => {
           type: 'call', title: 'Lead re-marked as Interested', description: note||'' 
         });
       }
-    } else if (existingClient && ['called','callback','busy','no_answer'].includes(status)) {
-      // Lead moved back from interested to an earlier stage
-      // Update pipeline client notes and add activity log — DO NOT DELETE (may have payments/proposals linked)
+    } else if (existingClient && ['called','callback','busy','no_answer','not_interested','invalid'].includes(status)) {
+      // Lead moved back from interested — update pipeline stage so it disappears from active Pipeline/Kanban
+      let newStage = existingClient.pipeline_stage;
+      // Only move back if it's still in early stages (hasn't progressed to meeting/proposal etc)
+      if (['interested','follow_up_1','follow_up_2'].includes(existingClient.pipeline_stage)) {
+        if (status === 'not_interested') {
+          newStage = 'lost'; // Permanently lost
+        } else {
+          newStage = 'follow_up_1'; // Back to follow-up stage — still in pipeline but lower
+        }
+        await existingClient.update({ pipeline_stage: newStage });
+      }
       await ClientActivity.create({ 
         client_id: existingClient.id, user_id: parseInt(req.session.user.id), 
         type: 'note', 
         title: 'Lead status changed to: '+status.replace('_',' '), 
-        description: note||'' 
+        description: (note||'')+(newStage!==existingClient.pipeline_stage?' | Pipeline moved to '+newStage:'')
       });
-      // Update client notes with latest info
       if (note) await existingClient.update({ notes: note });
     }
 
