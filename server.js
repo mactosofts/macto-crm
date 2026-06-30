@@ -84,6 +84,7 @@ async function init() {
 
     // Modify ENUMs separately (these can run repeatedly without error)
     try { await sequelize.query(`ALTER TABLE leads MODIFY COLUMN status ENUM('pending','called','interested','not_interested','callback','busy','no_answer','invalid','whatsapp_sent') DEFAULT 'pending'`); console.log('✅ ENUM updated: leads.status'); } catch(e) { console.log('❌ status enum failed:', e.message); }
+    try { await sequelize.query(`ALTER TABLE clients MODIFY COLUMN source ENUM('cold_call','ads','referral','audit','manual','import') DEFAULT 'cold_call'`); console.log('✅ ENUM updated: clients.source'); } catch(e) { console.log('❌ clients.source enum failed:', e.message); }
     try { await sequelize.query(`ALTER TABLE notifications MODIFY COLUMN type ENUM('task','client','lead','invoice','system','callback','reminder') DEFAULT 'system'`); console.log('✅ ENUM updated: notifications.type'); } catch(e) { console.log('❌ notif type enum failed:', e.message); }
 
     console.log('🔧 Migrations finished');
