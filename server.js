@@ -83,6 +83,7 @@ async function init() {
     } catch(e) { console.log('❌ Verification query failed:', e.message); }
 
     // Modify ENUMs separately (these can run repeatedly without error)
+    try { await sequelize.query(`ALTER TABLE clients MODIFY COLUMN pipeline_stage ENUM('interested','follow_up_1','follow_up_2','follow_up_3','meeting_scheduled','meeting_done','proposal_shared','negotiation','invoice_shared','advance_paid','converted','work_started','in_progress','deployed','completed','lost','on_hold') DEFAULT 'interested'`); console.log('✅ ENUM updated: clients.pipeline_stage'); } catch(e) { console.log('❌ pipeline_stage enum failed:', e.message); }
     try { await sequelize.query(`ALTER TABLE leads MODIFY COLUMN status ENUM('pending','called','interested','not_interested','callback','busy','no_answer','invalid','whatsapp_sent') DEFAULT 'pending'`); console.log('✅ ENUM updated: leads.status'); } catch(e) { console.log('❌ status enum failed:', e.message); }
     try { await sequelize.query(`ALTER TABLE clients MODIFY COLUMN source ENUM('cold_call','ads','referral','audit','manual','import') DEFAULT 'cold_call'`); console.log('✅ ENUM updated: clients.source'); } catch(e) { console.log('❌ clients.source enum failed:', e.message); }
     try { await sequelize.query(`ALTER TABLE notifications MODIFY COLUMN type ENUM('task','client','lead','invoice','system','callback','reminder') DEFAULT 'system'`); console.log('✅ ENUM updated: notifications.type'); } catch(e) { console.log('❌ notif type enum failed:', e.message); }
