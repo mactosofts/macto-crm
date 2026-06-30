@@ -125,7 +125,7 @@ router.get('/search', apiAuth, async (req, res) => {
 // ── EXPORT ────────────────────────────────────────────────────────
 router.get('/export/leads', apiAdmin, async (req, res) => {
   try {
-    const leads = await Lead.findAll({ attributes: ['id','name','phone','email','city','state','category','business_type','source','status','assigned_to','callback_date','last_note','not_converted_reason','extra','createdAt','updatedAt'], include: [{ model: User, as: 'assignedStaff', attributes: ['name'], required: false }] });
+    const leads = await Lead.findAll({ attributes: ['id','name','phone','email','city','state','category','business_type','source','status','assigned_to','callback_date','last_note','not_converted_reason','extra','call_count','wa_followup_date','last_called_at','createdAt','updatedAt'], include: [{ model: User, as: 'assignedStaff', attributes: ['name'], required: false }] });
     const data = leads.map(l => ({
       ID: l.id, Name: l.name, Phone: l.phone, Email: l.email||'',
       City: l.city||'', State: l.state||'', Category: l.category||'',
@@ -274,8 +274,13 @@ router.get('/leads', apiAuth, async (req, res) => {
     const offset = (parseInt(page)-1)*parseInt(limit);
     const validSort = ['id','name','lead_score','call_count','createdAt'].includes(sort) ? sort : 'id';
     const validOrder = ['ASC','DESC'].includes(order.toUpperCase()) ? order.toUpperCase() : 'ASC';
-    const { count, rows } = await Lead.findAndCountAll({ where, limit: parseInt(limit), offset, order: [[validSort, validOrder]], attributes: ['id','name','phone','email','city','state','category','business_type','source','status','assigned_to','callback_date','last_note','not_converted_reason','extra','createdAt','updatedAt'], include: [{ model: User, as: 'assignedStaff', attributes: ['name','avatar_color'], required: false }] });
-    res.json({ ok: true, data: rows, total: count, page: parseInt(page), pages: Math.ceil(count/parseInt(limit)) });
+    const { count, rows } = await Lead.findAndCountAll({ where, limit: parseInt(limit), offset, order: [[validSort, validOrder]], attributes: ['id','name','phone','email','city','state','category','business_type','source','status','assigned_to','callback_date','last_note','not_converted_reason','extra','call_count','wa_followup_date','last_called_at','createdAt','updatedAt'], include: [{ model: User, as: 'assignedStaff', attributes: ['name','avatar_color'], required: false }] });
+    // Mark which leads have already been converted to a client (for permanent ✓ Converted badge)
+    const leadIds = rows.map(l=>l.id);
+    const convertedClients = leadIds.length ? await Client.findAll({ where: { lead_id: { [Op.in]: leadIds } }, attributes: ['id','lead_id'] }) : [];
+    const convertedSet = new Set(convertedClients.map(c=>c.lead_id));
+    const data = rows.map(l => { const j = l.toJSON(); j.converted = convertedSet.has(l.id); return j; });
+    res.json({ ok: true, data, total: count, page: parseInt(page), pages: Math.ceil(count/parseInt(limit)) });
   } catch (e) { res.json({ ok: false, error: e.message }); }
 });
 
@@ -283,7 +288,7 @@ router.get('/leads/next', apiAuth, async (req, res) => {
   try {
     const where = { assigned_to: parseInt(req.session.user.id), status: 'pending' };
     if (req.query.after_id) where.id = { [Op.gt]: parseInt(req.query.after_id) };
-    const lead = await Lead.findOne({ where, order: [['id','ASC']], attributes: ['id','name','phone','email','city','state','category','business_type','source','status','assigned_to','callback_date','last_note','not_converted_reason','extra','createdAt','updatedAt'] });
+    const lead = await Lead.findOne({ where, order: [['id','ASC']], attributes: ['id','name','phone','email','city','state','category','business_type','source','status','assigned_to','callback_date','last_note','not_converted_reason','extra','call_count','wa_followup_date','last_called_at','createdAt','updatedAt'] });
     res.json({ ok: true, data: lead });
   } catch (e) { res.json({ ok: false, error: e.message }); }
 });
@@ -309,7 +314,7 @@ router.get('/leads/wa-followups', apiAuth, async (req, res) => {
   try {
     const where = { status: 'whatsapp_sent' };
     if (req.session.user.role === 'staff') where.assigned_to = parseInt(req.session.user.id);
-    const leads = await Lead.findAll({ where, order: [['id','ASC']], attributes: ['id','name','phone','email','city','state','category','business_type','source','status','assigned_to','callback_date','last_note','not_converted_reason','extra','createdAt','updatedAt'], include: [{ model: User, as: 'assignedStaff', attributes: ['name'], required: false }] });
+    const leads = await Lead.findAll({ where, order: [['id','ASC']], attributes: ['id','name','phone','email','city','state','category','business_type','source','status','assigned_to','callback_date','last_note','not_converted_reason','extra','call_count','wa_followup_date','last_called_at','createdAt','updatedAt'], include: [{ model: User, as: 'assignedStaff', attributes: ['name'], required: false }] });
     res.json({ ok: true, data: leads, count: leads.length });
   } catch (e) { res.json({ ok: false, error: e.message }); }
 });
@@ -319,7 +324,7 @@ router.get('/leads/callbacks-due', apiAuth, async (req, res) => {
     const today = new Date().toISOString().slice(0,10);
     const where = { status: 'callback', callback_date: { [Op.lte]: today } };
     if (req.session.user.role === 'staff') where.assigned_to = parseInt(req.session.user.id);
-    const leads = await Lead.findAll({ where, limit: 20, order: [['id','ASC']], attributes: ['id','name','phone','email','city','state','category','business_type','source','status','assigned_to','callback_date','last_note','not_converted_reason','extra','createdAt','updatedAt'] });
+    const leads = await Lead.findAll({ where, limit: 20, order: [['id','ASC']], attributes: ['id','name','phone','email','city','state','category','business_type','source','status','assigned_to','callback_date','last_note','not_converted_reason','extra','call_count','wa_followup_date','last_called_at','createdAt','updatedAt'] });
     res.json({ ok: true, data: leads, count: leads.length });
   } catch (e) { res.json({ ok: false, error: e.message }); }
 });
@@ -422,7 +427,7 @@ router.post('/leads/:id/log', apiAuth, async (req, res) => {
       newClient = await Client.create({ name: lead.name, phone: lead.phone, email: lead.email, city: lead.city, state: lead.state, category: lead.category, source: lead.source, lead_id: lead.id, assigned_to: lead.assigned_to, pipeline_stage: 'interested' });
       await ClientActivity.create({ client_id: newClient.id, user_id: parseInt(req.session.user.id), type: 'stage_change', title: 'Lead converted to client', description: note||'' });
     }
-    const nextLead = await Lead.findOne({ where: { assigned_to: parseInt(req.session.user.id), status: 'pending', id: { [Op.gt]: lead.id } }, order: [['id','ASC']], attributes: ['id','name','phone','email','city','state','category','business_type','source','status','assigned_to','callback_date','last_note','not_converted_reason','extra','createdAt','updatedAt'] });
+    const nextLead = await Lead.findOne({ where: { assigned_to: parseInt(req.session.user.id), status: 'pending', id: { [Op.gt]: lead.id } }, order: [['id','ASC']], attributes: ['id','name','phone','email','city','state','category','business_type','source','status','assigned_to','callback_date','last_note','not_converted_reason','extra','call_count','wa_followup_date','last_called_at','createdAt','updatedAt'] });
     res.json({ ok: true, nextLead, newClient });
   } catch (e) { res.json({ ok: false, error: e.message }); }
 });
@@ -1106,19 +1111,34 @@ router.get('/work/followup-alerts', apiAuth, async (req, res) => {
     const userId = parseInt(req.session.user.id);
     const now = new Date();
     const today = now.toISOString().slice(0,10);
-    const in30 = new Date(now.getTime() + 30*60*1000);
-    const in30Str = in30.toISOString().slice(0,10);
-    
+
     // Overdue callbacks
     const overdueCallbacks = await Lead.count({
       where: { assigned_to: userId, status: 'callback', callback_date: { [Op.lt]: today } }
     });
-    
+
     // Today callbacks
     const todayCallbacks = await Lead.count({
       where: { assigned_to: userId, status: 'callback', callback_date: today }
     });
-    
+
+    // Interested leads awaiting next action (matches admin Follow-ups page)
+    const interestedCount = await Lead.count({
+      where: { assigned_to: userId, status: 'interested' }
+    });
+
+    // Busy leads ready for recontact (2+ days since last call)
+    const recontactCutoff = new Date(); recontactCutoff.setDate(recontactCutoff.getDate() - 2);
+    const busyCount = await Lead.count({
+      where: {
+        assigned_to: userId, status: 'busy',
+        [Op.or]: [
+          { last_called_at: { [Op.lte]: recontactCutoff } },
+          { last_called_at: null }
+        ]
+      }
+    });
+
     // Overdue client followups
     const overdueFollowups = await Client.count({
       where: { 
@@ -1137,9 +1157,11 @@ router.get('/work/followup-alerts', apiAuth, async (req, res) => {
       }
     });
 
-    const total = overdueCallbacks + todayCallbacks + overdueFollowups + todayFollowups;
+    // Total matches the same dedup logic as the admin Follow-ups page:
+    // each lead counted once (callback OR interested OR busy), plus client followups
+    const total = overdueCallbacks + todayCallbacks + interestedCount + busyCount + overdueFollowups + todayFollowups;
     
-    res.json({ ok: true, overdueCallbacks, todayCallbacks, overdueFollowups, todayFollowups, total });
+    res.json({ ok: true, overdueCallbacks, todayCallbacks, interestedCount, busyCount, overdueFollowups, todayFollowups, total });
   } catch(e) { res.json({ ok: false, error: e.message }); }
 });
 
