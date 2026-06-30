@@ -519,7 +519,7 @@ async function renderDashboard(container) {
     {l:'Total Calls',v:r.totalCalls,s:'All time',c:'#8b5cf6',icon:'☎️'},
     {l:'Total Revenue',v:fmt(r.totalRevenue),s:'All time',c:'#22c55e',icon:'💰'},
     {l:'Month Revenue',v:fmt(r.monthRevenue),s:'This month',c:'#4ade80',icon:'📈'},
-    {l:'Active Clients',v:r.activeClients,s:'Total: '+r.totalClients,c:'#06b6d4',icon:'👥'},
+    {l:'Active Clients',v:r.totalClients,s:'In pipeline: '+r.activeClients,c:'#06b6d4',icon:'👥'},
     {l:'Pending Tasks',v:r.pendingTasks,s:'Overdue: '+r.overdueTasks,c:r.overdueTasks>0?'#ef4444':'#8b5cf6',icon:'📝'},
     {l:'Proposals',v:r.totalProposals,s:'Accepted: '+r.acceptedProposals,c:'#a78bfa',icon:'📄'},
     {l:'Pending Invoices',v:fmt(r.pendingInvValue),s:r.pendingInvCount+' invoices',c:'#fb923c',icon:'🧾'},
