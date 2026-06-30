@@ -197,7 +197,7 @@ router.get('/dashboard/overview', apiAdmin, async (req, res) => {
       Lead.count({ where: { assigned_to: null } }),
       Lead.count({ where: { createdAt: { [Op.gte]: today } } }),
       Client.count(),
-      Client.count({ where: { pipeline_stage: { [Op.notIn]: ['completed','lost'] } } }),
+      Client.count({ where: { pipeline_stage: { [Op.notIn]: ['completed','lost','on_hold'] } } }),
       Client.sum('total_received') || 0,
       Invoice.sum('total', { where: { status: 'paid', createdAt: { [Op.gte]: monthStart } } }) || 0,
       Invoice.sum('total', { where: { status: 'sent' } }) || 0,
