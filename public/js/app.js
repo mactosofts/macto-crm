@@ -404,7 +404,13 @@ async function renderDashboard(container) {
     api.get('/leads/callbacks-due'),
   ]);
   container.innerHTML = '';
-  if (!r.ok) { container.appendChild(alertEl('error','Failed to load dashboard')); return; }
+  if (!r.ok) { 
+    container.appendChild(el('div',{className:'page-title'},'🏠 Command Center'));
+    container.appendChild(alertEl('error','Failed to load dashboard: '+(r.error||'Unknown error')));
+    container.appendChild(el('button',{className:'btn btn-primary',onClick:()=>renderDashboard(container)},'🔄 Retry'));
+    console.error('Dashboard load failed:', r);
+    return; 
+  }
 
   const now = new Date();
   const dateStr = now.toLocaleDateString('en-IN',{weekday:'long',year:'numeric',month:'long',day:'numeric'});
