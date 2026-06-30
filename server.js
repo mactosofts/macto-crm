@@ -44,29 +44,49 @@ async function init() {
     console.log('✅ Database tables created/updated');
 
     // Manual migration: add new columns that alter:false won't add automatically
-    const migrations = [
-      `ALTER TABLE users ADD COLUMN IF NOT EXISTS whatsapp VARCHAR(20) NULL`,
-      `ALTER TABLE users ADD COLUMN IF NOT EXISTS email VARCHAR(150) NULL`,
-      `ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_color VARCHAR(20) DEFAULT '#6366f1'`,
-      `ALTER TABLE leads ADD COLUMN IF NOT EXISTS wa_followup_date DATE NULL`,
-      `ALTER TABLE leads ADD COLUMN IF NOT EXISTS lead_score INT DEFAULT 0`,
-      `ALTER TABLE leads ADD COLUMN IF NOT EXISTS call_count INT DEFAULT 0`,
-      `ALTER TABLE leads ADD COLUMN IF NOT EXISTS last_called_at DATETIME NULL`,
-      `ALTER TABLE leads MODIFY COLUMN status ENUM('pending','called','interested','not_interested','callback','busy','no_answer','invalid','whatsapp_sent') DEFAULT 'pending'`,
-      `ALTER TABLE clients ADD COLUMN IF NOT EXISTS priority ENUM('low','medium','high','vip') DEFAULT 'medium'`,
-      `ALTER TABLE clients ADD COLUMN IF NOT EXISTS tags JSON NULL`,
-      `ALTER TABLE clients ADD COLUMN IF NOT EXISTS gstin VARCHAR(20) NULL`,
-      `ALTER TABLE invoices ADD COLUMN IF NOT EXISTS cgst_amount DECIMAL(12,2) DEFAULT 0`,
-      `ALTER TABLE invoices ADD COLUMN IF NOT EXISTS sgst_amount DECIMAL(12,2) DEFAULT 0`,
-      `ALTER TABLE invoices ADD COLUMN IF NOT EXISTS igst_amount DECIMAL(12,2) DEFAULT 0`,
-      `ALTER TABLE invoices ADD COLUMN IF NOT EXISTS gst_type ENUM('cgst_sgst','igst') DEFAULT 'cgst_sgst'`,
-      `ALTER TABLE call_logs ADD COLUMN IF NOT EXISTS duration_sec INT DEFAULT 0`,
-      `ALTER TABLE notifications MODIFY COLUMN type ENUM('task','client','lead','invoice','system','callback','reminder') DEFAULT 'system'`,
-    ];
-    for (const sql of migrations) {
-      try { await sequelize.query(sql); } catch(e) { /* column likely already exists, safe to ignore */ }
+    console.log('🔧 Starting column migrations...');
+    async function safeAddColumn(table, column, definition) {
+      try {
+        await sequelize.query(`ALTER TABLE \`${table}\` ADD COLUMN \`${column}\` ${definition}`);
+        console.log(`✅ ADDED: ${table}.${column}`);
+      } catch(e) {
+        if (e.message && (e.message.includes('Duplicate column') || e.message.includes('already exists'))) {
+          console.log(`⏭️  EXISTS: ${table}.${column}`);
+        } else {
+          console.log(`❌ FAILED: ${table}.${column} — ${e.message}`);
+        }
+      }
     }
-    console.log('✅ Manual migrations applied');
+
+    await safeAddColumn('users', 'whatsapp', 'VARCHAR(20) NULL');
+    await safeAddColumn('users', 'email', 'VARCHAR(150) NULL');
+    await safeAddColumn('users', 'avatar_color', "VARCHAR(20) DEFAULT '#6366f1'");
+    await safeAddColumn('leads', 'wa_followup_date', 'DATE NULL');
+    await safeAddColumn('leads', 'lead_score', 'INT DEFAULT 0');
+    await safeAddColumn('leads', 'call_count', 'INT DEFAULT 0');
+    await safeAddColumn('leads', 'last_called_at', 'DATETIME NULL');
+    await safeAddColumn('clients', 'priority', "ENUM('low','medium','high','vip') DEFAULT 'medium'");
+    await safeAddColumn('clients', 'tags', 'JSON NULL');
+    await safeAddColumn('clients', 'gstin', 'VARCHAR(20) NULL');
+    await safeAddColumn('invoices', 'cgst_amount', 'DECIMAL(12,2) DEFAULT 0');
+    await safeAddColumn('invoices', 'sgst_amount', 'DECIMAL(12,2) DEFAULT 0');
+    await safeAddColumn('invoices', 'igst_amount', 'DECIMAL(12,2) DEFAULT 0');
+    await safeAddColumn('invoices', 'gst_type', "ENUM('cgst_sgst','igst') DEFAULT 'cgst_sgst'");
+    await safeAddColumn('call_logs', 'duration_sec', 'INT DEFAULT 0');
+
+    // Verify the critical column actually exists now
+    try {
+      const [check] = await sequelize.query(
+        `SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'leads' AND COLUMN_NAME = 'wa_followup_date'`
+      );
+      console.log(check.length > 0 ? '✅ VERIFIED: leads.wa_followup_date exists in DB' : '❌ VERIFICATION FAILED: leads.wa_followup_date still missing!');
+    } catch(e) { console.log('❌ Verification query failed:', e.message); }
+
+    // Modify ENUMs separately (these can run repeatedly without error)
+    try { await sequelize.query(`ALTER TABLE leads MODIFY COLUMN status ENUM('pending','called','interested','not_interested','callback','busy','no_answer','invalid','whatsapp_sent') DEFAULT 'pending'`); console.log('✅ ENUM updated: leads.status'); } catch(e) { console.log('❌ status enum failed:', e.message); }
+    try { await sequelize.query(`ALTER TABLE notifications MODIFY COLUMN type ENUM('task','client','lead','invoice','system','callback','reminder') DEFAULT 'system'`); console.log('✅ ENUM updated: notifications.type'); } catch(e) { console.log('❌ notif type enum failed:', e.message); }
+
+    console.log('🔧 Migrations finished');
 
     // Create new tables (work_schedules, work_logs, wa_campaigns) if they don't exist
     try {
