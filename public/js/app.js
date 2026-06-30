@@ -106,7 +106,8 @@ const el = (tag, attrs={}, ...kids) => {
   }
   for (const kid of kids.flat()) {
     if (kid==null || kid===false) continue;
-    e.appendChild(typeof kid==='string' ? document.createTextNode(kid) : kid);
+    if (typeof kid==='string' || typeof kid==='number') e.appendChild(document.createTextNode(String(kid)));
+    else e.appendChild(kid);
   }
   return e;
 };
@@ -2570,10 +2571,18 @@ async function renderAdminFollowups(container, isStaffView=false) {
     isStaffView ? Promise.resolve({ok:true,data:[]}) : api.get('/users'),
     api.get('/leads/wa-followups')
   ]);
+  const [interestedR, busyR, notInterestedR] = await Promise.all([
+    api.get('/leads?status=interested&limit=300'),
+    api.get('/leads?status=busy&limit=300'),
+    api.get('/leads?status=not_interested&limit=300'),
+  ]);
   const leads = leadsR.ok ? leadsR.data : [];
   const clients = clientsR.ok ? clientsR.data : [];
   const users = usersR.ok ? usersR.data : [];
   const waFollowups = waFollowupsR.ok ? waFollowupsR.data : [];
+  const interestedLeads = interestedR.ok ? interestedR.data : [];
+  const busyLeads = busyR.ok ? busyR.data : [];
+  const notInterestedLeads = notInterestedR.ok ? notInterestedR.data : [];
   const today = new Date().toISOString().slice(0,10);
   const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate()+1);
   const tomorrowStr = tomorrow.toISOString().slice(0,10);
@@ -2592,7 +2601,26 @@ async function renderAdminFollowups(container, isStaffView=false) {
 
   // Filter by staff (admin only)
   let staffFilter = 'all';
+  let showNotInterested = false;
   const staffUsers = users.filter(u=>u.role==='staff');
+
+  // 3-category quick summary banner (Callback / Interested / Busy)
+  const callbackTotal = leads.filter(l=>l.callback_date).length;
+  const interestedTotal = interestedLeads.length;
+  const busyTotal = busyLeads.length;
+  const summaryBanner = el('div',{style:'display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px'});
+  [
+    {l:'📞 Call Back',v:callbackTotal,c:'#fbbf24',desc:'Leads with a callback date set'},
+    {l:'⭐ Interested',v:interestedTotal,c:'#22c55e',desc:'Need next-step action'},
+    {l:'😴 Busy',v:busyTotal,c:'#8b5cf6',desc:'Waiting to recontact'},
+  ].forEach(k=>{
+    summaryBanner.appendChild(el('div',{style:`background:linear-gradient(135deg,${k.c}15,${k.c}05);border:1px solid ${k.c}33;border-radius:14px;padding:18px;text-align:center`},
+      el('div',{style:`font-size:32px;font-weight:900;color:${k.c}`},String(k.v)),
+      el('div',{style:'font-size:13px;font-weight:700;color:var(--text);margin-top:4px'},k.l),
+      el('div',{style:'font-size:11px;color:var(--muted);margin-top:2px'},k.desc)
+    ));
+  });
+  container.appendChild(summaryBanner);
 
   let filterBar = null;
   if(!isStaffView && staffUsers.length) {
@@ -2607,6 +2635,17 @@ async function renderAdminFollowups(container, isStaffView=false) {
     container.appendChild(filterBar);
   }
 
+  // Busy leads that have waited 2+ days reappear as "needs recontact"
+  const BUSY_RECONTACT_DAYS = 2;
+  function getBusyRecontactList(items) {
+    return items.filter(l=>{
+      const lastCalled = l.last_called_at || l.updatedAt || l.createdAt;
+      if(!lastCalled) return true;
+      const daysSince = Math.floor((new Date() - new Date(lastCalled)) / (1000*60*60*24));
+      return daysSince >= BUSY_RECONTACT_DAYS;
+    });
+  }
+
   // Summary KPI cards
   const overdueLeads = leads.filter(l=>l.callback_date&&l.callback_date<today);
   const todayLeads = leads.filter(l=>l.callback_date===today);
@@ -2615,18 +2654,29 @@ async function renderAdminFollowups(container, isStaffView=false) {
   const overdueClients = clients.filter(c=>c.next_followup&&c.next_followup<today&&!['completed','lost'].includes(c.pipeline_stage));
   const todayClients = clients.filter(c=>c.next_followup===today&&!['completed','lost'].includes(c.pipeline_stage));
   const upcomingClients = clients.filter(c=>c.next_followup&&c.next_followup>today&&!['completed','lost'].includes(c.pipeline_stage));
+  const busyNeedsRecontact = getBusyRecontactList(busyLeads);
+  const interestedNoClient = interestedLeads; // interested leads that haven't been pushed to pipeline yet
+
+  // Build a true deduplicated set of "needs follow-up" items by unique key (no double counting)
+  const followupKeys = new Set();
+  overdueLeads.forEach(l=>followupKeys.add('lead-'+l.id));
+  todayLeads.forEach(l=>followupKeys.add('lead-'+l.id));
+  interestedNoClient.forEach(l=>followupKeys.add('lead-'+l.id));
+  busyNeedsRecontact.forEach(l=>followupKeys.add('lead-'+l.id));
+  overdueClients.forEach(c=>followupKeys.add('client-'+c.id));
+  todayClients.forEach(c=>followupKeys.add('client-'+c.id));
+  const totalUniqueFollowups = followupKeys.size;
 
   const kpiGrid = el('div',{style:'display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:12px;margin-bottom:20px'});
   [
     {l:'🔴 Overdue Callbacks',v:overdueLeads.length,c:'#ef4444'},
     {l:'🟡 Today Callbacks',v:todayLeads.length,c:'#fbbf24'},
-    {l:'🕐 Tomorrow',v:tomorrowLeads.length,c:'#fb923c'},
-    {l:'📅 Next 7 Days',v:next7Leads.length,c:'#8b5cf6'},
+    {l:'⭐ Need Next Step',v:interestedNoClient.length,c:'#22c55e'},
+    {l:'😴 Busy — Recontact',v:busyNeedsRecontact.length,c:'#8b5cf6'},
     {l:'🔴 Overdue Clients',v:overdueClients.length,c:'#ef4444'},
     {l:'🟡 Client Due Today',v:todayClients.length,c:'#fbbf24'},
-    {l:'🟢 Upcoming Clients',v:upcomingClients.length,c:'#22c55e'},
-    {l:'📋 Total Pending',v:overdueLeads.length+todayLeads.length+overdueClients.length+todayClients.length,c:'#6366f1'},
     {l:'💬 WhatsApp Follow-ups',v:waFollowups.length,c:'#25d166'},
+    {l:'📋 Total Follow-ups',v:totalUniqueFollowups,c:'#6366f1'},
   ].forEach(k=>{
     const card = el('div',{style:`background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:14px;border-left:4px solid ${k.c};cursor:pointer;transition:all 0.2s`});
     card.addEventListener('mouseenter',()=>{card.style.transform='translateY(-2px)';card.style.boxShadow=`0 4px 16px ${k.c}22`;});
@@ -2655,15 +2705,98 @@ async function renderAdminFollowups(container, isStaffView=false) {
     return diff;
   }
 
+  function refreshAll() { renderAdminFollowups(container,isStaffView); }
+
   function renderLeadCard(l, borderColor) {
     const staff = getStaffName(l.assigned_to);
     const daysOverdue = getDaysOverdue(l.callback_date);
-    const card = el('div',{style:`background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:14px;border-left:4px solid ${borderColor};cursor:pointer;transition:all 0.15s;margin-bottom:8px`});
+    const attempts = l.call_count||0;
+    const needsEscalation = attempts >= 3;
+    const card = el('div',{style:`background:var(--bg3);border:1px solid ${needsEscalation?'#ef444466':'var(--border)'};border-radius:12px;padding:14px;border-left:4px solid ${borderColor};cursor:pointer;transition:all 0.15s;margin-bottom:8px`});
     card.addEventListener('mouseenter',()=>{card.style.transform='translateX(2px)';});
     card.addEventListener('mouseleave',()=>{card.style.transform='';});
     card.addEventListener('click',()=>{
       if(activeModal)activeModal.remove();
-      activeModal=renderCallModal(l,()=>{activeModal&&activeModal.remove();activeModal=null;renderAdminFollowups(container,isStaffView);},()=>{activeModal&&activeModal.remove();activeModal=null;});
+      activeModal=renderCallModal(l,()=>{activeModal&&activeModal.remove();activeModal=null;refreshAll();},()=>{activeModal&&activeModal.remove();activeModal=null;});
+      document.body.appendChild(activeModal);
+    });
+    card.appendChild(el('div',{style:'display:flex;justify-content:space-between;align-items:flex-start;gap:10px'},
+      el('div',{style:'flex:1'},
+        el('div',{style:'display:flex;align-items:center;gap:8px'},
+          el('div',{style:'font-weight:700;font-size:14px'},l.name||'Unknown'),
+          attempts>0?el('span',{style:`font-size:10px;font-weight:800;padding:1px 7px;border-radius:999px;background:${needsEscalation?'#ef444422':'var(--bg4)'};color:${needsEscalation?'#ef4444':'var(--muted2)'}`},'📞×'+String(attempts)):null,
+          needsEscalation?el('span',{style:'font-size:10px;font-weight:800;padding:1px 7px;border-radius:999px;background:#ef444422;color:#ef4444'},'⚠️ ESCALATE'):null
+        ),
+        el('div',{style:'font-family:monospace;color:var(--muted2);font-size:13px;margin-top:2px'},l.phone||'—'),
+        el('div',{style:'display:flex;gap:8px;margin-top:6px;flex-wrap:wrap'},
+          el('span',{style:'font-size:11px;color:var(--muted2);background:var(--bg4);padding:2px 7px;border-radius:4px'},'👤 '+staff),
+          catLabel(l.category)?el('span',{style:'font-size:11px;color:var(--muted2);background:var(--bg4);padding:2px 7px;border-radius:4px'},catLabel(l.category)):null,
+          l.source?el('span',{style:'font-size:11px;color:var(--muted2);background:var(--bg4);padding:2px 7px;border-radius:4px'},l.source):null,
+          (l.call_count||0)>=3?el('span',{style:'font-size:11px;color:#fff;background:#ef4444;padding:2px 8px;border-radius:4px;font-weight:700'},'⚠️ '+String(l.call_count)+' attempts'):
+          (l.call_count||0)>0?el('span',{style:'font-size:11px;color:var(--muted2);background:var(--bg4);padding:2px 7px;border-radius:4px'},'📞 Attempt '+String((l.call_count||0)+1)):null
+        ),
+        l.last_note?el('div',{style:'color:var(--muted);font-size:11px;margin-top:6px;font-style:italic;padding-top:6px;border-top:1px solid var(--border)'},'📝 '+l.last_note):null
+      ),
+      el('div',{style:'text-align:right;flex-shrink:0'},
+        el('div',{style:`color:${borderColor};font-size:11px;font-weight:700;margin-top:4px`},'📅 '+l.callback_date),
+        daysOverdue>0?el('div',{style:'color:#ef4444;font-size:10px;font-weight:700;margin-top:2px'},String(daysOverdue)+' days overdue!'):null
+      )
+    ));
+    return card;
+  }
+
+  // INTERESTED lead — needs next action: move to pipeline, schedule demo, send proposal
+  function renderInterestedCard(l) {
+    const staff = getStaffName(l.assigned_to);
+    const attempts = l.call_count||0;
+    const card = el('div',{style:'background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:14px;border-left:4px solid #22c55e;transition:all 0.15s;margin-bottom:8px'});
+    card.appendChild(el('div',{style:'display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:10px'},
+      el('div',{style:'flex:1'},
+        el('div',{style:'display:flex;align-items:center;gap:8px'},
+          el('div',{style:'font-weight:700;font-size:14px'},l.name||'Unknown'),
+          attempts>0?el('span',{style:'font-size:10px;font-weight:800;padding:1px 7px;border-radius:999px;background:var(--bg4);color:var(--muted2)'},'📞×'+String(attempts)):null
+        ),
+        el('div',{style:'font-family:monospace;color:var(--muted2);font-size:13px;margin-top:2px'},l.phone||'—'),
+        el('div',{style:'display:flex;gap:8px;margin-top:6px;flex-wrap:wrap'},
+          el('span',{style:'font-size:11px;color:var(--muted2);background:var(--bg4);padding:2px 7px;border-radius:4px'},'👤 '+staff),
+          catLabel(l.category)?el('span',{style:'font-size:11px;color:var(--muted2);background:var(--bg4);padding:2px 7px;border-radius:4px'},catLabel(l.category)):null,
+          (l.call_count||0)>=3?el('span',{style:'font-size:11px;color:#fff;background:#ef4444;padding:2px 8px;border-radius:4px;font-weight:700'},'⚠️ '+String(l.call_count)+' attempts'):null
+        ),
+        l.last_note?el('div',{style:'color:var(--muted);font-size:11px;margin-top:6px;font-style:italic'},'📝 '+l.last_note):null
+      ),
+      el('span',{style:'background:#22c55e22;color:#22c55e;padding:3px 10px;border-radius:999px;font-size:11px;font-weight:800;flex-shrink:0'},'⭐ INTERESTED')
+    ));
+    // Next-step action buttons
+    const actRow = el('div',{style:'display:flex;gap:6px;flex-wrap:wrap;padding-top:10px;border-top:1px solid var(--border)'});
+    actRow.appendChild(el('a',{href:'tel:'+l.phone,className:'btn btn-success btn-xs',style:'text-decoration:none'},'📞 Call'));
+    actRow.appendChild(el('button',{className:'btn btn-cyan btn-xs',onClick:()=>{
+      openWhatsAppModal(l.phone, null, l.name, refreshAll);
+    }},'💬 WhatsApp'));
+    actRow.appendChild(el('button',{className:'btn btn-primary btn-xs',onClick:async()=>{
+      const r = await api.post('/clients',{name:l.name,phone:l.phone,email:l.email,city:l.city,category:l.category,source:l.source,assigned_to:l.assigned_to,pipeline_stage:'interested',notes:'Manually moved from Follow-ups → Interested lead, lead_id:'+l.id});
+      if(r.ok){showToast('✅ Moved to Pipeline as client!','success');refreshAll();}
+      else showToast('❌ '+r.error,'error');
+    }},'➡️ Move to Pipeline'));
+    actRow.appendChild(el('button',{className:'btn btn-ghost btn-xs',onClick:()=>{
+      if(activeModal)activeModal.remove();
+      activeModal=renderCallModal(l,()=>{activeModal&&activeModal.remove();activeModal=null;refreshAll();},()=>{activeModal&&activeModal.remove();activeModal=null;});
+      document.body.appendChild(activeModal);
+    }},'📋 Update Status'));
+    card.appendChild(actRow);
+    return card;
+  }
+
+  // BUSY lead that needs recontact after waiting period
+  function renderBusyCard(l) {
+    const staff = getStaffName(l.assigned_to);
+    const lastCalled = l.last_called_at || l.updatedAt || l.createdAt;
+    const daysSince = lastCalled ? Math.floor((new Date() - new Date(lastCalled)) / (1000*60*60*24)) : 0;
+    const card = el('div',{style:'background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:14px;border-left:4px solid #8b5cf6;cursor:pointer;transition:all 0.15s;margin-bottom:8px'});
+    card.addEventListener('mouseenter',()=>{card.style.transform='translateX(2px)';});
+    card.addEventListener('mouseleave',()=>{card.style.transform='';});
+    card.addEventListener('click',()=>{
+      if(activeModal)activeModal.remove();
+      activeModal=renderCallModal(l,()=>{activeModal&&activeModal.remove();activeModal=null;refreshAll();},()=>{activeModal&&activeModal.remove();activeModal=null;});
       document.body.appendChild(activeModal);
     });
     card.appendChild(el('div',{style:'display:flex;justify-content:space-between;align-items:flex-start;gap:10px'},
@@ -2672,16 +2805,32 @@ async function renderAdminFollowups(container, isStaffView=false) {
         el('div',{style:'font-family:monospace;color:var(--muted2);font-size:13px;margin-top:2px'},l.phone||'—'),
         el('div',{style:'display:flex;gap:8px;margin-top:6px;flex-wrap:wrap'},
           el('span',{style:'font-size:11px;color:var(--muted2);background:var(--bg4);padding:2px 7px;border-radius:4px'},'👤 '+staff),
-          catLabel(l.category)?el('span',{style:'font-size:11px;color:var(--muted2);background:var(--bg4);padding:2px 7px;border-radius:4px'},catLabel(l.category)):null,
-          l.source?el('span',{style:'font-size:11px;color:var(--muted2);background:var(--bg4);padding:2px 7px;border-radius:4px'},l.source):null
-        ),
-        l.last_note?el('div',{style:'color:var(--muted);font-size:11px;margin-top:6px;font-style:italic;padding-top:6px;border-top:1px solid var(--border)'},'📝 '+l.last_note):null
+          el('span',{style:'font-size:11px;color:#8b5cf6;background:rgba(139,92,246,0.12);padding:2px 7px;border-radius:4px'},'😴 Was Busy'),
+          (l.call_count||0)>=3?el('span',{style:'font-size:11px;color:#fff;background:#ef4444;padding:2px 8px;border-radius:4px;font-weight:700'},'⚠️ '+String(l.call_count)+' attempts'):null
+        )
       ),
       el('div',{style:'text-align:right;flex-shrink:0'},
-        callBadge(l.status),
-        el('div',{style:`color:${borderColor};font-size:11px;font-weight:700;margin-top:4px`},'📅 '+l.callback_date),
-        daysOverdue>0?el('div',{style:'color:#ef4444;font-size:10px;font-weight:700;margin-top:2px'},daysOverdue+' days overdue!'):null
+        el('div',{style:'color:#8b5cf6;font-size:11px;font-weight:700'},String(daysSince)+' days ago'),
+        el('a',{href:'tel:'+l.phone,className:'btn btn-success btn-xs',style:'text-decoration:none;margin-top:4px;display:inline-block',onClick:(e)=>e.stopPropagation()},'📞 Try Again')
       )
+    ));
+    return card;
+  }
+
+  // NOT INTERESTED — shown only when toggled, with reason
+  function renderNotInterestedCard(l) {
+    const staff = getStaffName(l.assigned_to);
+    const card = el('div',{style:'background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:14px;border-left:4px solid #ef4444;margin-bottom:8px;opacity:0.85'});
+    card.appendChild(el('div',{style:'display:flex;justify-content:space-between;align-items:flex-start;gap:10px'},
+      el('div',{style:'flex:1'},
+        el('div',{style:'font-weight:700;font-size:14px'},l.name||'Unknown'),
+        el('div',{style:'font-family:monospace;color:var(--muted2);font-size:13px;margin-top:2px'},l.phone||'—'),
+        el('div',{style:'display:flex;gap:8px;margin-top:6px'},
+          el('span',{style:'font-size:11px;color:var(--muted2);background:var(--bg4);padding:2px 7px;border-radius:4px'},'👤 '+staff)
+        ),
+        l.not_converted_reason?el('div',{style:'color:#f87171;font-size:11px;margin-top:6px;font-style:italic'},'❌ Reason: '+l.not_converted_reason):null
+      ),
+      el('span',{style:'background:#ef444422;color:#ef4444;padding:3px 10px;border-radius:999px;font-size:11px;font-weight:700;flex-shrink:0'},'NOT INTERESTED')
     ));
     return card;
   }
@@ -2692,7 +2841,7 @@ async function renderAdminFollowups(container, isStaffView=false) {
     const card = el('div',{style:`background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:14px;border-left:4px solid ${borderColor};cursor:pointer;transition:all 0.15s;margin-bottom:8px`});
     card.addEventListener('mouseenter',()=>{card.style.transform='translateX(2px)';});
     card.addEventListener('mouseleave',()=>{card.style.transform='';});
-    card.addEventListener('click',()=>openClientModal(c,users,()=>renderAdminFollowups(container,isStaffView)));
+    card.addEventListener('click',()=>openClientModal(c,users,refreshAll));
     card.appendChild(el('div',{style:'display:flex;justify-content:space-between;align-items:flex-start;gap:10px'},
       el('div',{style:'flex:1'},
         el('div',{style:'font-weight:700;font-size:14px'},c.name+(c.company?' — '+c.company:'')),
@@ -2706,7 +2855,7 @@ async function renderAdminFollowups(container, isStaffView=false) {
       ),
       el('div',{style:'text-align:right;flex-shrink:0'},
         el('div',{style:`color:${borderColor};font-size:12px;font-weight:700`},'📅 '+fmtDay(c.next_followup)),
-        daysOverdue>0?el('div',{style:'color:#ef4444;font-size:10px;font-weight:700;margin-top:2px'},daysOverdue+' days overdue!'):null,
+        daysOverdue>0?el('div',{style:'color:#ef4444;font-size:10px;font-weight:700;margin-top:2px'},String(daysOverdue)+' days overdue!'):null,
         c.advance_paid>0?el('div',{style:'color:#4ade80;font-size:11px;margin-top:2px'},'Paid: '+fmt(c.advance_paid)):null
       )
     ));
@@ -2720,7 +2869,7 @@ async function renderAdminFollowups(container, isStaffView=false) {
     card.addEventListener('mouseleave',()=>{card.style.transform='';});
     card.addEventListener('click',()=>{
       if(activeModal)activeModal.remove();
-      activeModal=renderCallModal(l,()=>{activeModal&&activeModal.remove();activeModal=null;renderAdminFollowups(container,isStaffView);},()=>{activeModal&&activeModal.remove();activeModal=null;});
+      activeModal=renderCallModal(l,()=>{activeModal&&activeModal.remove();activeModal=null;refreshAll();},()=>{activeModal&&activeModal.remove();activeModal=null;});
       document.body.appendChild(activeModal);
     });
     card.appendChild(el('div',{style:'display:flex;justify-content:space-between;align-items:flex-start;gap:10px'},
@@ -2758,6 +2907,9 @@ async function renderAdminFollowups(container, isStaffView=false) {
     // Apply staff filter
     const fLeads = staffFilter==='all' ? leads : leads.filter(l=>String(l.assigned_to)===staffFilter);
     const fClients = staffFilter==='all' ? clients : clients.filter(c=>String(c.assigned_to)===staffFilter);
+    const fInterested = staffFilter==='all' ? interestedLeads : interestedLeads.filter(l=>String(l.assigned_to)===staffFilter);
+    const fBusyRecontact = staffFilter==='all' ? busyNeedsRecontact : busyNeedsRecontact.filter(l=>String(l.assigned_to)===staffFilter);
+    const fNotInterested = staffFilter==='all' ? notInterestedLeads : notInterestedLeads.filter(l=>String(l.assigned_to)===staffFilter);
 
     const oLeads = fLeads.filter(l=>l.callback_date&&l.callback_date<today);
     const tLeads = fLeads.filter(l=>l.callback_date===today);
@@ -2769,18 +2921,26 @@ async function renderAdminFollowups(container, isStaffView=false) {
     const tmrClients = fClients.filter(c=>c.next_followup===tomorrowStr&&!['completed','lost'].includes(c.pipeline_stage));
     const upClients = fClients.filter(c=>c.next_followup&&c.next_followup>today&&!['completed','lost'].includes(c.pipeline_stage));
 
-    // LEAD CALLBACKS
-    sectionsDiv.appendChild(el('div',{style:'font-size:13px;font-weight:800;color:var(--text);text-transform:uppercase;letter-spacing:1px;margin-bottom:12px;padding-bottom:8px;border-bottom:2px solid var(--border)'},'📞 LEAD CALLBACKS'));
+    // CALL BACK
+    sectionsDiv.appendChild(el('div',{style:'font-size:13px;font-weight:800;color:var(--text);text-transform:uppercase;letter-spacing:1px;margin-bottom:12px;padding-bottom:8px;border-bottom:2px solid var(--border)'},'📞 CALL BACK'));
     sectionsDiv.appendChild(renderSection('🔴 Overdue Callbacks', oLeads, l=>renderLeadCard(l,'#ef4444'), '#ef4444', 'No overdue callbacks!'));
     sectionsDiv.appendChild(renderSection('🟡 Todays Callbacks', tLeads, l=>renderLeadCard(l,'#fbbf24'), '#fbbf24', 'No callbacks scheduled for today'));
     sectionsDiv.appendChild(renderSection('🕐 Tomorrows Callbacks', tmrLeads, l=>renderLeadCard(l,'#fb923c'), '#fb923c', 'No callbacks for tomorrow'));
     sectionsDiv.appendChild(renderSection('📅 Next 7 Days', n7Leads, l=>renderLeadCard(l,'#8b5cf6'), '#8b5cf6', 'No callbacks in next 7 days'));
     if(futLeads.length) sectionsDiv.appendChild(renderSection('🗓️ Future Callbacks', futLeads.slice(0,20), l=>renderLeadCard(l,'#06b6d4'), '#06b6d4', ''));
 
+    // INTERESTED — needs next step
+    sectionsDiv.appendChild(el('div',{style:'font-size:13px;font-weight:800;color:var(--text);text-transform:uppercase;letter-spacing:1px;margin:20px 0 12px;padding-bottom:8px;border-bottom:2px solid var(--border)'},'⭐ INTERESTED — NEEDS NEXT STEP'));
+    sectionsDiv.appendChild(renderSection('⭐ Awaiting Action', fInterested, renderInterestedCard, '#22c55e', 'No interested leads waiting on action'));
+
+    // BUSY — recontact after waiting period
+    sectionsDiv.appendChild(el('div',{style:'font-size:13px;font-weight:800;color:var(--text);text-transform:uppercase;letter-spacing:1px;margin:20px 0 12px;padding-bottom:8px;border-bottom:2px solid var(--border)'},'😴 BUSY — RECONTACT'));
+    sectionsDiv.appendChild(renderSection('😴 Ready to Try Again (2+ days)', fBusyRecontact, renderBusyCard, '#8b5cf6', 'No busy leads ready for recontact'));
+
     // WHATSAPP FOLLOW-UPS
     const fWaFollowups = staffFilter==='all' ? waFollowups : waFollowups.filter(l=>String(l.assigned_to)===staffFilter);
     sectionsDiv.appendChild(el('div',{style:'font-size:13px;font-weight:800;color:var(--text);text-transform:uppercase;letter-spacing:1px;margin:20px 0 12px;padding-bottom:8px;border-bottom:2px solid var(--border)'},'💬 WHATSAPP FOLLOW-UPS'));
-    sectionsDiv.appendChild(renderSection('💬 Recontact — WhatsApp Sent Yesterday', fWaFollowups, l=>renderWaFollowupCard(l,'#25d166'), '#25d166', 'No WhatsApp follow-ups pending'));
+    sectionsDiv.appendChild(renderSection('💬 Recontact — WhatsApp Sent', fWaFollowups, l=>renderWaFollowupCard(l,'#25d166'), '#25d166', 'No WhatsApp follow-ups pending'));
 
     // CLIENT FOLLOW-UPS
     sectionsDiv.appendChild(el('div',{style:'font-size:13px;font-weight:800;color:var(--text);text-transform:uppercase;letter-spacing:1px;margin:20px 0 12px;padding-bottom:8px;border-bottom:2px solid var(--border)'},'👥 CLIENT FOLLOW-UPS'));
@@ -2788,10 +2948,21 @@ async function renderAdminFollowups(container, isStaffView=false) {
     sectionsDiv.appendChild(renderSection('🟡 Todays Client Follow-ups', tClients, c=>renderClientCard(c,'#fbbf24'), '#fbbf24', 'No client follow-ups for today'));
     sectionsDiv.appendChild(renderSection('🕐 Tomorrows Client Follow-ups', tmrClients, c=>renderClientCard(c,'#fb923c'), '#fb923c', 'No client follow-ups for tomorrow'));
     sectionsDiv.appendChild(renderSection('🟢 Upcoming Client Follow-ups', upClients.slice(0,30), c=>renderClientCard(c,'#22c55e'), '#22c55e', 'No upcoming client follow-ups'));
+
+    // NOT INTERESTED — collapsed by default, toggle to view
+    sectionsDiv.appendChild(el('div',{style:'margin:24px 0 12px'},
+      el('button',{className:'btn btn-ghost btn-sm',onClick:()=>{showNotInterested=!showNotInterested;renderSections();}},
+        (showNotInterested?'▼ Hide':'▶ Show')+' Not Interested Leads ('+String(fNotInterested.length)+')'
+      )
+    ));
+    if(showNotInterested){
+      sectionsDiv.appendChild(renderSection('❌ Not Interested', fNotInterested.slice(0,50), renderNotInterestedCard, '#ef4444', 'None'));
+    }
   }
 
   renderSections();
 }
+
 
 
 // ── TASKS ─────────────────────────────────────────────────────────
@@ -3437,7 +3608,7 @@ async function renderKanban(container) {
     const col = el('div',{className:'kanban-col'});
     col.appendChild(el('div',{className:'kanban-col-header',style:`border-bottom-color:${stage.color}44`},
       el('span',{style:`color:${stage.color};font-weight:700`},stage.label),
-      el('span',{style:`background:${stage.color}22;color:${stage.color};padding:2px 8px;border-radius:999px;font-size:11px`},cols.length)
+      el('span',{style:`background:${stage.color}22;color:${stage.color};padding:2px 8px;border-radius:999px;font-size:11px`},String(cols.length))
     ));
     if(!cols.length){
       col.appendChild(el('div',{style:'text-align:center;padding:20px;color:var(--muted);font-size:12px'},'Empty'));
