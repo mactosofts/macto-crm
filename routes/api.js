@@ -125,7 +125,7 @@ router.get('/search', apiAuth, async (req, res) => {
 // ── EXPORT ────────────────────────────────────────────────────────
 router.get('/export/leads', apiAdmin, async (req, res) => {
   try {
-    const leads = await Lead.findAll({ include: [{ model: User, as: 'assignedStaff', attributes: ['name'], required: false }] });
+    const leads = await Lead.findAll({ attributes: ['id','name','phone','email','city','state','category','business_type','source','status','assigned_to','callback_date','last_note','not_converted_reason','extra','createdAt','updatedAt'], include: [{ model: User, as: 'assignedStaff', attributes: ['name'], required: false }] });
     const data = leads.map(l => ({
       ID: l.id, Name: l.name, Phone: l.phone, Email: l.email||'',
       City: l.city||'', State: l.state||'', Category: l.category||'',
@@ -238,7 +238,13 @@ router.get('/dashboard/overview', apiAdmin, async (req, res) => {
     const pipelineByStage = await Client.findAll({ attributes: ['pipeline_stage', [sequelize.fn('COUNT', sequelize.col('id')), 'cnt'], [sequelize.fn('SUM', sequelize.col('project_value')), 'val']], group: ['pipeline_stage'] });
     const recentActivities = await ClientActivity.findAll({ include: [{ model: User, as: 'user', attributes: ['name'], required: false }, { model: Client, attributes: ['name'], required: false }], order: [['date','DESC']], limit: 10 });
     const overduefollowups = await Client.findAll({ where: { next_followup: { [Op.lte]: now }, pipeline_stage: { [Op.notIn]: ['completed','lost'] } }, include: [{ model: User, as: 'assignedStaff', attributes: ['name'], required: false }], limit: 10 });
-    const hotLeads = await Lead.findAll({ where: { status: { [Op.in]: ['callback','interested'] }, assigned_to: { [Op.ne]: null } }, order: [['lead_score','DESC']], limit: 5, include: [{ model: User, as: 'assignedStaff', attributes: ['name'], required: false }] });
+    const hotLeads = await Lead.findAll({
+      where: { status: { [Op.in]: ['callback','interested'] }, assigned_to: { [Op.ne]: null } },
+      order: [['id','DESC']],
+      limit: 5,
+      attributes: ['id','name','phone','email','city','status','category','assigned_to','callback_date'],
+      include: [{ model: User, as: 'assignedStaff', attributes: ['name'], required: false }]
+    });
 
     res.json({
       ok: true, totalLeads, unassigned, assigned: totalLeads-unassigned, todayLeads,
@@ -268,7 +274,7 @@ router.get('/leads', apiAuth, async (req, res) => {
     const offset = (parseInt(page)-1)*parseInt(limit);
     const validSort = ['id','name','lead_score','call_count','createdAt'].includes(sort) ? sort : 'id';
     const validOrder = ['ASC','DESC'].includes(order.toUpperCase()) ? order.toUpperCase() : 'ASC';
-    const { count, rows } = await Lead.findAndCountAll({ where, limit: parseInt(limit), offset, order: [[validSort, validOrder]], include: [{ model: User, as: 'assignedStaff', attributes: ['name','avatar_color'], required: false }] });
+    const { count, rows } = await Lead.findAndCountAll({ where, limit: parseInt(limit), offset, order: [[validSort, validOrder]], attributes: ['id','name','phone','email','city','state','category','business_type','source','status','assigned_to','callback_date','last_note','not_converted_reason','extra','createdAt','updatedAt'], include: [{ model: User, as: 'assignedStaff', attributes: ['name','avatar_color'], required: false }] });
     res.json({ ok: true, data: rows, total: count, page: parseInt(page), pages: Math.ceil(count/parseInt(limit)) });
   } catch (e) { res.json({ ok: false, error: e.message }); }
 });
@@ -277,7 +283,7 @@ router.get('/leads/next', apiAuth, async (req, res) => {
   try {
     const where = { assigned_to: parseInt(req.session.user.id), status: 'pending' };
     if (req.query.after_id) where.id = { [Op.gt]: parseInt(req.query.after_id) };
-    const lead = await Lead.findOne({ where, order: [['lead_score','DESC'],['id','ASC']] });
+    const lead = await Lead.findOne({ where, order: [['id','ASC']], attributes: ['id','name','phone','email','city','state','category','business_type','source','status','assigned_to','callback_date','last_note','not_converted_reason','extra','createdAt','updatedAt'] });
     res.json({ ok: true, data: lead });
   } catch (e) { res.json({ ok: false, error: e.message }); }
 });
@@ -303,7 +309,7 @@ router.get('/leads/wa-followups', apiAuth, async (req, res) => {
   try {
     const where = { status: 'whatsapp_sent' };
     if (req.session.user.role === 'staff') where.assigned_to = parseInt(req.session.user.id);
-    const leads = await Lead.findAll({ where, order: [['wa_followup_date','ASC']], include: [{ model: User, as: 'assignedStaff', attributes: ['name'], required: false }] });
+    const leads = await Lead.findAll({ where, order: [['id','ASC']], attributes: ['id','name','phone','email','city','state','category','business_type','source','status','assigned_to','callback_date','last_note','not_converted_reason','extra','createdAt','updatedAt'], include: [{ model: User, as: 'assignedStaff', attributes: ['name'], required: false }] });
     res.json({ ok: true, data: leads, count: leads.length });
   } catch (e) { res.json({ ok: false, error: e.message }); }
 });
@@ -313,7 +319,7 @@ router.get('/leads/callbacks-due', apiAuth, async (req, res) => {
     const today = new Date().toISOString().slice(0,10);
     const where = { status: 'callback', callback_date: { [Op.lte]: today } };
     if (req.session.user.role === 'staff') where.assigned_to = parseInt(req.session.user.id);
-    const leads = await Lead.findAll({ where, limit: 20, order: [['callback_date','ASC']] });
+    const leads = await Lead.findAll({ where, limit: 20, order: [['id','ASC']], attributes: ['id','name','phone','email','city','state','category','business_type','source','status','assigned_to','callback_date','last_note','not_converted_reason','extra','createdAt','updatedAt'] });
     res.json({ ok: true, data: leads, count: leads.length });
   } catch (e) { res.json({ ok: false, error: e.message }); }
 });
@@ -416,7 +422,7 @@ router.post('/leads/:id/log', apiAuth, async (req, res) => {
       newClient = await Client.create({ name: lead.name, phone: lead.phone, email: lead.email, city: lead.city, state: lead.state, category: lead.category, source: lead.source, lead_id: lead.id, assigned_to: lead.assigned_to, pipeline_stage: 'interested' });
       await ClientActivity.create({ client_id: newClient.id, user_id: parseInt(req.session.user.id), type: 'stage_change', title: 'Lead converted to client', description: note||'' });
     }
-    const nextLead = await Lead.findOne({ where: { assigned_to: parseInt(req.session.user.id), status: 'pending', id: { [Op.gt]: lead.id } }, order: [['lead_score','DESC'],['id','ASC']] });
+    const nextLead = await Lead.findOne({ where: { assigned_to: parseInt(req.session.user.id), status: 'pending', id: { [Op.gt]: lead.id } }, order: [['id','ASC']], attributes: ['id','name','phone','email','city','state','category','business_type','source','status','assigned_to','callback_date','last_note','not_converted_reason','extra','createdAt','updatedAt'] });
     res.json({ ok: true, nextLead, newClient });
   } catch (e) { res.json({ ok: false, error: e.message }); }
 });
