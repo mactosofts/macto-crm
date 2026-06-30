@@ -23,7 +23,7 @@ app.use(express.static(path.join(__dirname, 'public'), {
 
 async function init() {
   try {
-    await sequelize.sync({ alter: false });
+    await sequelize.sync({ alter: true });
     console.log('✅ Database tables created/updated');
 
     const sessionStore = new SequelizeStore({ db: sequelize });
