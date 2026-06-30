@@ -71,7 +71,7 @@ router.post('/change-password', apiAuth, async (req, res) => {
 
 // ── USERS ─────────────────────────────────────────────────────────
 router.get('/users', apiAdmin, async (req, res) => {
-  const users = await User.findAll({ where: { active: true }, attributes: ['id','name','username','role','daily_target','email','avatar_color','createdAt'] });
+  const users = await User.findAll({ where: { active: true }, attributes: ['id','name','username','role','daily_target','email','avatar_color','whatsapp','createdAt'] });
   res.json({ ok: true, data: users });
 });
 
@@ -1182,7 +1182,9 @@ router.post('/notifications/send-reminders', apiAdmin, async (req, res) => {
       if(ok) sent++;
     }
 
-    res.json({ ok: true, sent, total: Object.keys(staffMessages).length, message: `Sent ${sent} reminder(s) to staff` });
+    res.json({ ok: true, sent, total: Object.keys(staffMessages).length, 
+      message: sent > 0 ? 'Sent '+sent+' reminder(s) to staff' : 'No staff with WhatsApp numbers found. Add WhatsApp numbers in Team settings.' 
+    });
   } catch(e) { res.json({ ok: false, error: e.message }); }
 });
 
