@@ -61,7 +61,17 @@ const ACT_MAP = Object.fromEntries(ACTIVITY_TYPES.map(a=>[a.value,a]));
 // ── STATE ────────────────────────────────────────────────────────
 let STATE = { user: null, tab: 'dashboard' };
 
-// ── HELPERS ──────────────────────────────────────────────────────
+// ── GLOBAL EVENT BUS — views listen and update each other ────────
+const CRM_BUS = {
+  _l: {},
+  on(e, fn) { (this._l[e] = this._l[e]||[]).push(fn); },
+  off(e, fn) { this._l[e] = (this._l[e]||[]).filter(f=>f!==fn); },
+  emit(e, d) { (this._l[e]||[]).forEach(fn=>{try{fn(d);}catch(ex){}});  }
+};
+
+// When any data changes, emit the event so any open view can refresh
+function notifyDataChanged(type='all') { CRM_BUS.emit('data-changed', {type}); }
+
 const api = {
   async call(method, path, body) {
     try {
@@ -78,9 +88,9 @@ const api = {
     }
   },
   get: p => api.call('GET', p),
-  post: (p,b) => api.call('POST', p, b),
-  put: (p,b) => api.call('PUT', p, b),
-  del: p => api.call('DELETE', p),
+  post: async (p,b) => { const r = await api.call('POST',p,b); if(r&&r.ok) notifyDataChanged(); return r; },
+  put: async (p,b) => { const r = await api.call('PUT',p,b); if(r&&r.ok) notifyDataChanged(); return r; },
+  del: async p => { const r = await api.call('DELETE',p); if(r&&r.ok) notifyDataChanged(); return r; },
   async upload(path, fd) {
     try {
       const r = await fetch('/api'+path, { method:'POST', body:fd, credentials:'include' });
@@ -753,12 +763,46 @@ async function renderDashboard(container) {
     container.appendChild(aCard);
   }
 
-  // Auto-refresh every 60 seconds
+  // ── LIVE STAFF ACTIVITY FEED ──────────────────────────────────
+  if(r.liveActivity && r.liveActivity.length) {
+    const liveCard = el('div',{className:'card',style:'margin-bottom:16px'});
+    liveCard.appendChild(el('div',{style:'display:flex;justify-content:space-between;align-items:center;margin-bottom:12px'},
+      el('div',{style:'display:flex;align-items:center;gap:8px'},
+        el('div',{className:'card-title',style:'margin:0'},'⚡ Live Staff Activity'),
+        el('span',{style:'background:#22c55e;width:8px;height:8px;border-radius:50%;display:inline-block;animation:pulse 2s infinite'})
+      ),
+      el('div',{style:'font-size:11px;color:var(--muted)'},'Last 2 hours · auto-refreshes every 30s')
+    ));
+    const statusColors = {interested:'#22c55e',callback:'#fbbf24',called:'#3b82f6',not_interested:'#ef4444',busy:'#8b5cf6',no_answer:'#fb923c',whatsapp_sent:'#25d166',pending:'#94a3b8'};
+    r.liveActivity.slice(0,15).forEach(a=>{
+      const sc = statusColors[a.status]||'#94a3b8';
+      const staffColor = a.staff?.avatar_color||'#6366f1';
+      const timeAgo = a.call_date ? Math.round((new Date()-new Date(a.call_date))/60000) : 0;
+      liveCard.appendChild(el('div',{style:'display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--border)'},
+        el('div',{style:`width:28px;height:28px;border-radius:50%;background:${staffColor}33;border:2px solid ${staffColor};display:flex;align-items:center;justify-content:center;font-weight:800;color:${staffColor};font-size:11px;flex-shrink:0`},
+          (a.staff?.name||'?').charAt(0).toUpperCase()
+        ),
+        el('div',{style:'flex:1'},
+          el('div',{style:'font-size:12px;font-weight:700'},a.staff?.name||'Staff'),
+          el('div',{style:'font-size:11px;color:var(--muted2)'},'called '+(a.Lead?.name||'a lead'))
+        ),
+        el('span',{style:`background:${sc}22;color:${sc};padding:2px 8px;border-radius:4px;font-size:11px;font-weight:700`},
+          (a.status||'called').replace('_',' ').toUpperCase()
+        ),
+        el('div',{style:'font-size:10px;color:var(--muted);flex-shrink:0'},
+          timeAgo < 1 ? 'just now' : String(timeAgo)+'m ago'
+        )
+      ));
+    });
+    container.appendChild(liveCard);
+  }
+
+  // Auto-refresh every 30 seconds (faster for live activity)
   if(STATE._dashRefresh) clearInterval(STATE._dashRefresh);
   STATE._dashRefresh = setInterval(()=>{
     if(STATE.tab==='dashboard') renderDashboard(container);
     else clearInterval(STATE._dashRefresh);
-  }, 60000);
+  }, 30000);
 }
 
 
@@ -2395,19 +2439,26 @@ function openClientModal(client, users, onUpdate) {
 // ── PIPELINE ─────────────────────────────────────────────────────
 async function renderPipeline(container) {
   container.innerHTML = loading();
-  const [clientsR, usersR] = await Promise.all([api.get('/clients?limit=300'), api.get('/users')]);
-  const clients = clientsR.ok ? clientsR.data : [];
+  const [clientsR, usersR] = await Promise.all([api.get('/clients?limit=500'), api.get('/users')]);
+  let clients = clientsR.ok ? clientsR.data : [];
   const users = usersR.ok ? usersR.data : [];
   container.innerHTML = '';
-  container.appendChild(el('div',{className:'page-title'},'📊 Sales Pipeline'));
 
-  // Stage summary
+  container.appendChild(el('div',{style:'display:flex;justify-content:space-between;align-items:center;margin-bottom:16px'},
+    el('div',{className:'page-title',style:'margin:0'},'📊 Sales Pipeline'),
+    el('div',{style:'display:flex;gap:8px'},
+      el('button',{className:'btn btn-ghost btn-sm',onClick:()=>renderPipeline(container)},'🔄 Refresh'),
+      el('button',{className:'btn btn-ghost btn-sm',onClick:()=>{STATE.tab='kanban';render();}},'🗂️ Kanban View')
+    )
+  ));
+
+  // Stage summary chips
   const byStage = {};
   clients.forEach(c=>{byStage[c.pipeline_stage]=(byStage[c.pipeline_stage]||0)+1;});
   const summaryRow = el('div',{style:'display:flex;gap:8px;overflow-x:auto;padding-bottom:8px;margin-bottom:16px'});
   PIPELINE_STAGES.forEach(s=>{
     if (!byStage[s.value]) return;
-    summaryRow.appendChild(el('div',{style:`flex-shrink:0;background:var(--bg3);border:1px solid ${s.color}44;border-radius:8px;padding:8px 14px;border-top:2px solid ${s.color}`},
+    summaryRow.appendChild(el('div',{style:`flex-shrink:0;background:var(--bg3);border:1px solid ${s.color}44;border-radius:8px;padding:8px 14px;border-top:2px solid ${s.color};cursor:pointer`,onClick:()=>{stageSel.value=s.value;filters.stage=s.value;renderList();}},
       el('div',{style:`font-size:20px;font-weight:800;color:${s.color}`},String(byStage[s.value])),
       el('div',{style:'font-size:11px;color:var(--muted);margin-top:2px;white-space:nowrap'},s.label)
     ));
@@ -2421,47 +2472,98 @@ async function renderPipeline(container) {
   const catSel = el('select',{className:'inp inp-sm'});
   [['all','All Categories'],...CATEGORIES.map(c=>[c.value,c.label])].forEach(([v,l])=>catSel.appendChild(el('option',{value:v},l)));
   const staffSel = el('select',{className:'inp inp-sm'});
-  [['all','All Staff'],...users.filter(u=>u.role==='staff').map(u=>[u.id,u.name])].forEach(([v,l])=>staffSel.appendChild(el('option',{value:v},l)));
+  [['all','All Staff'],...users.filter(u=>u.role==='staff').map(u=>[String(u.id),u.name])].forEach(([v,l])=>staffSel.appendChild(el('option',{value:v},l)));
   container.appendChild(el('div',{className:'filters-bar'},searchInp,stageSel,catSel,staffSel));
 
-  const listArea = el('div',{});container.appendChild(listArea);
+  const listArea = el('div',{});
+  container.appendChild(listArea);
   let filters={search:'',stage:'all',cat:'all',staff:'all'};
+
+  function openStageDropdown(c, triggerEl) {
+    const existing = document.querySelector('.stage-dropdown');
+    if(existing) existing.remove();
+    const dd = el('div',{style:'position:absolute;z-index:999;background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:8px;box-shadow:0 8px 32px rgba(0,0,0,0.4);min-width:180px'});
+    dd.addEventListener('click',e=>e.stopPropagation());
+    dd.className = 'stage-dropdown';
+    PIPELINE_STAGES.forEach(s=>{
+      const btn = el('div',{style:`padding:7px 12px;cursor:pointer;border-radius:6px;font-size:12px;font-weight:600;color:${s.color};background:${c.pipeline_stage===s.value?s.color+'22':'transparent'}`,onClick:async()=>{
+        dd.remove();
+        const r = await api.put('/clients/'+c.id, {pipeline_stage: s.value, stage_note: 'Changed via Pipeline view'});
+        if(r.ok){showToast('✅ Stage updated to '+s.label,'success');renderPipeline(container);}
+        else showToast('❌ '+r.error,'error');
+      }},s.label);
+      btn.addEventListener('mouseenter',()=>btn.style.background=s.color+'22');
+      btn.addEventListener('mouseleave',()=>btn.style.background=c.pipeline_stage===s.value?s.color+'22':'transparent');
+      dd.appendChild(btn);
+    });
+    const rect = triggerEl.getBoundingClientRect();
+    dd.style.top = (rect.bottom+window.scrollY+4)+'px';
+    dd.style.left = (rect.left+window.scrollX)+'px';
+    document.body.appendChild(dd);
+    setTimeout(()=>document.addEventListener('click',()=>dd.remove(),{once:true}),10);
+  }
 
   function renderList(){
     const filtered=clients.filter(c=>{
       if(filters.search&&![c.name,c.company,c.phone].some(v=>v&&v.toLowerCase().includes(filters.search.toLowerCase())))return false;
       if(filters.stage!=='all'&&c.pipeline_stage!==filters.stage)return false;
       if(filters.cat!=='all'&&c.category!==filters.cat)return false;
-      if(filters.staff!=='all'&&c.assigned_to!=filters.staff)return false;
+      if(filters.staff!=='all'&&String(c.assigned_to)!==filters.staff)return false;
       return true;
     });
     listArea.innerHTML='';
-    listArea.appendChild(el('p',{style:'color:var(--muted);font-size:12px;margin-bottom:10px'},filtered.length+' clients'));
+    listArea.appendChild(el('p',{style:'color:var(--muted);font-size:12px;margin-bottom:10px'},String(filtered.length)+' clients'));
     const tw=el('div',{className:'table-wrap'},el('table',{},
-      el('thead',{},el('tr',{},...['Client','Category','Stage','Value','Received','Staff','Action'].map(h=>el('th',{},h)))),
+      el('thead',{},el('tr',{},...['Client','Category','Stage','Next Follow-up','Value','Received','Staff','Actions'].map(h=>el('th',{},h)))),
       el('tbody',{},...filtered.map(c=>{
         const staff=users.find(u=>u.id===c.assigned_to);
+        const staffColor = staff?.avatar_color||'#6366f1';
+        const isOverdue = c.next_followup && c.next_followup < new Date().toISOString().slice(0,10);
+        const stageBtn = el('button',{className:'btn btn-ghost btn-xs',style:'padding:2px 8px;font-size:11px'},stageBadge(c.pipeline_stage),' ▾');
+        stageBtn.addEventListener('click',e=>{e.stopPropagation();openStageDropdown(c,stageBtn);});
         const tr=el('tr',{style:'cursor:pointer',onClick:()=>openClientModal(c,users,()=>renderPipeline(container))},
-          el('td',{},el('div',{className:'td-name'},c.name),el('div',{className:'td-muted'},c.company||c.phone||'')),
+          el('td',{},
+            el('div',{style:'font-weight:700;font-size:13px'},c.name),
+            el('div',{style:'font-size:11px;color:var(--muted2)'},c.company||c.phone||'')
+          ),
           el('td',{style:'font-size:12px;color:var(--muted2)'},catLabel(c.category)),
-          el('td',{}),
+          el('td',{onClick:(e)=>{e.stopPropagation();openStageDropdown(c,tr.children[2]);},style:'cursor:pointer'},stageBtn),
+          el('td',{style:`font-size:12px;${isOverdue?'color:#ef4444;font-weight:700':'color:var(--muted2)'}`},
+            c.next_followup ? (isOverdue?'⚠️ ':'📅 ')+fmtDay(c.next_followup) : '—'
+          ),
           el('td',{style:'color:#4ade80;font-weight:600;font-size:13px'},fmt(c.project_value)),
           el('td',{style:'color:#22c55e;font-size:13px'},fmt(c.total_received)),
-          el('td',{className:'td-muted'},staff?staff.name:'—'),
-          el('td',{},el('button',{className:'btn btn-ghost btn-xs',onClick:(e)=>{e.stopPropagation();openClientModal(c,users,()=>renderPipeline(container));}},'View'))
+          el('td',{},
+            staff ? el('div',{style:`display:inline-flex;align-items:center;gap:4px;background:${staffColor}15;color:${staffColor};padding:2px 8px;border-radius:4px;font-size:11px;font-weight:700`},'👤 '+staff.name) : el('span',{style:'color:#ef4444;font-size:11px'},'⚠ Unassigned')
+          ),
+          el('td',{style:'display:flex;gap:4px',onClick:e=>e.stopPropagation()},
+            el('button',{className:'btn btn-primary btn-xs',onClick:()=>openClientModal(c,users,()=>renderPipeline(container))},'View'),
+            el('a',{href:'tel:'+c.phone,className:'btn btn-success btn-xs',style:'text-decoration:none'},'📞')
+          )
         );
-        tr.children[2].appendChild(stageBadge(c.pipeline_stage));
         return tr;
       }))
     ));
     listArea.appendChild(tw);
   }
 
-  let st;searchInp.addEventListener('input',()=>{clearTimeout(st);st=setTimeout(()=>{filters.search=searchInp.value;renderList();},300);});
+  let st;
+  searchInp.addEventListener('input',()=>{clearTimeout(st);st=setTimeout(()=>{filters.search=searchInp.value;renderList();},300);});
   stageSel.addEventListener('change',()=>{filters.stage=stageSel.value;renderList();});
   catSel.addEventListener('change',()=>{filters.cat=catSel.value;renderList();});
   staffSel.addEventListener('change',()=>{filters.staff=staffSel.value;renderList();});
   renderList();
+
+  // Listen for data changes — auto-refresh pipeline
+  const refreshHandler = async () => {
+    const r = await api.get('/clients?limit=500');
+    if(r.ok) { clients = r.data; renderList(); }
+  };
+  CRM_BUS.on('data-changed', refreshHandler);
+  // Clean up listener when user navigates away
+  const origRender = render;
+  const cleanup = () => CRM_BUS.off('data-changed', refreshHandler);
+  container._cleanup = cleanup;
 }
 
 // ── ALL CLIENTS ──────────────────────────────────────────────────
@@ -3612,60 +3714,125 @@ async function renderWACampaigns(container) {
 async function renderKanban(container) {
   container.innerHTML = loading();
   const [clientsR, usersR] = await Promise.all([api.get('/clients?limit=500'), api.get('/users')]);
-  const clients = clientsR.ok ? clientsR.data : [];
+  let clients = clientsR.ok ? clientsR.data : [];
   const users = usersR.ok ? usersR.data : [];
   container.innerHTML = '';
+
   container.appendChild(el('div',{style:'display:flex;justify-content:space-between;align-items:center;margin-bottom:16px'},
-    el('div',{className:'page-title',style:'margin:0'},'📊 Kanban Pipeline'),
-    el('button',{className:'btn btn-ghost btn-sm',onClick:()=>renderKanban(container)},'🔄 Refresh')
+    el('div',{className:'page-title',style:'margin:0'},'🗂️ Kanban Board'),
+    el('div',{style:'display:flex;gap:8px'},
+      el('button',{className:'btn btn-ghost btn-sm',onClick:()=>renderKanban(container)},'🔄 Refresh'),
+      el('button',{className:'btn btn-ghost btn-sm',onClick:()=>{STATE.tab='pipeline';render();}},'📋 Table View')
+    )
   ));
 
   const KANBAN_STAGES = [
-    {value:'interested',label:'Interested',color:'#60a5fa'},
+    {value:'interested',label:'⭐ Interested',color:'#60a5fa'},
     {value:'follow_up_1',label:'Follow-up 1',color:'#fbbf24'},
-    {value:'meeting_scheduled',label:'Meeting',color:'#a78bfa'},
-    {value:'proposal_shared',label:'Proposal',color:'#06b6d4'},
-    {value:'negotiation',label:'Negotiation',color:'#fb923c'},
-    {value:'invoice_shared',label:'Invoice',color:'#fb923c'},
-    {value:'converted',label:'Converted',color:'#22c55e'},
-    {value:'in_progress',label:'In Progress',color:'#4ade80'},
-    {value:'lost',label:'Lost',color:'#ef4444'},
+    {value:'follow_up_2',label:'Follow-up 2',color:'#f59e0b'},
+    {value:'meeting_scheduled',label:'📅 Meeting',color:'#a78bfa'},
+    {value:'proposal_shared',label:'📄 Proposal',color:'#06b6d4'},
+    {value:'negotiation',label:'🤝 Negotiation',color:'#fb923c'},
+    {value:'invoice_shared',label:'🧾 Invoice',color:'#fb923c'},
+    {value:'converted',label:'✅ Converted',color:'#22c55e'},
+    {value:'in_progress',label:'🔧 In Progress',color:'#4ade80'},
+    {value:'completed',label:'🎉 Completed',color:'#22c55e'},
+    {value:'lost',label:'❌ Lost',color:'#ef4444'},
   ];
 
-  const byStage = {};
-  KANBAN_STAGES.forEach(s=>{byStage[s.value]=[];});
-  clients.forEach(c=>{
-    const key = KANBAN_STAGES.find(s=>s.value===c.pipeline_stage)?.value || 'interested';
-    if(byStage[key]) byStage[key].push(c);
-  });
-
-  const board = el('div',{className:'kanban-board'});
-  KANBAN_STAGES.forEach(stage=>{
-    const cols = byStage[stage.value]||[];
-    const col = el('div',{className:'kanban-col'});
-    col.appendChild(el('div',{className:'kanban-col-header',style:`border-bottom-color:${stage.color}44`},
-      el('span',{style:`color:${stage.color};font-weight:700`},stage.label),
-      el('span',{style:`background:${stage.color}22;color:${stage.color};padding:2px 8px;border-radius:999px;font-size:11px`},String(cols.length))
-    ));
-    if(!cols.length){
-      col.appendChild(el('div',{style:'text-align:center;padding:20px;color:var(--muted);font-size:12px'},'Empty'));
+  async function moveStage(client, newStage) {
+    const r = await api.put('/clients/'+client.id, {pipeline_stage: newStage, stage_note: 'Moved via Kanban'});
+    if(r.ok){
+      showToast('✅ '+client.name+' → '+KANBAN_STAGES.find(s=>s.value===newStage)?.label,'success');
+      // Update local data
+      const idx = clients.findIndex(c=>c.id===client.id);
+      if(idx>-1) clients[idx] = {...clients[idx], pipeline_stage: newStage};
+      drawBoard();
+    } else {
+      showToast('❌ '+r.error,'error');
     }
-    cols.forEach(c=>{
-      const staff = users.find(u=>u.id===c.assigned_to);
-      const card = el('div',{className:'kanban-card',onClick:()=>openClientModal(c,users,()=>renderKanban(container))},
-        el('div',{style:'font-weight:700;font-size:13px;margin-bottom:4px'},c.name),
-        c.company?el('div',{style:'font-size:11px;color:var(--muted2);margin-bottom:4px'},c.company):null,
-        el('div',{style:'display:flex;justify-content:space-between;align-items:center;margin-top:6px'},
-          el('div',{style:'font-size:12px;color:#4ade80;font-weight:600'},c.project_value>0?fmt(c.project_value):'No value'),
-          staff?el('div',{style:`background:${staff.avatar_color||'#6366f1'}33;color:${staff.avatar_color||'#6366f1'};border-radius:999px;padding:2px 8px;font-size:10px;font-weight:700`},staff.name.split(' ')[0]):null
-        ),
-        c.next_followup?el('div',{style:'font-size:10px;color:#fbbf24;margin-top:4px'},'📅 '+fmtDay(c.next_followup)):null
-      );
-      col.appendChild(card);
+  }
+
+  function drawBoard() {
+    const existing = container.querySelector('.kanban-scroll');
+    if(existing) existing.remove();
+
+    const byStage = {};
+    KANBAN_STAGES.forEach(s=>{byStage[s.value]=[];});
+    clients.forEach(c=>{
+      const key = KANBAN_STAGES.find(s=>s.value===c.pipeline_stage)?.value;
+      if(key && byStage[key]) byStage[key].push(c);
+      else if(byStage['interested']) byStage['interested'].push(c);
     });
-    board.appendChild(col);
-  });
-  container.appendChild(el('div',{style:'overflow-x:auto'},board));
+
+    const scroll = el('div',{className:'kanban-scroll',style:'overflow-x:auto'});
+    const board = el('div',{className:'kanban-board'});
+
+    KANBAN_STAGES.forEach((stage,stageIdx)=>{
+      const cols = byStage[stage.value]||[];
+      const col = el('div',{className:'kanban-col'});
+      col.appendChild(el('div',{className:'kanban-col-header',style:`border-bottom:3px solid ${stage.color}`},
+        el('span',{style:`color:${stage.color};font-weight:700;font-size:13px`},stage.label),
+        el('span',{style:`background:${stage.color}22;color:${stage.color};padding:2px 8px;border-radius:999px;font-size:11px;margin-left:4px`},String(cols.length))
+      ));
+
+      if(!cols.length){
+        col.appendChild(el('div',{style:'text-align:center;padding:20px;color:var(--muted);font-size:12px;border:2px dashed var(--border);border-radius:8px;margin-top:8px'},'No clients'));
+      }
+
+      cols.forEach(c=>{
+        const staff = users.find(u=>u.id===c.assigned_to);
+        const staffColor = staff?.avatar_color||'#6366f1';
+        const isOverdue = c.next_followup && c.next_followup < new Date().toISOString().slice(0,10);
+
+        const card = el('div',{className:'kanban-card',style:'position:relative'});
+
+        // Card header
+        card.appendChild(el('div',{style:'font-weight:700;font-size:13px;margin-bottom:4px;cursor:pointer',onClick:()=>openClientModal(c,users,()=>drawBoard())},c.name));
+        if(c.company) card.appendChild(el('div',{style:'font-size:11px;color:var(--muted2);margin-bottom:4px'},c.company));
+
+        // Staff + value row
+        card.appendChild(el('div',{style:'display:flex;justify-content:space-between;align-items:center;margin-top:6px'},
+          staff?el('div',{style:`background:${staffColor}22;color:${staffColor};border-radius:999px;padding:2px 8px;font-size:10px;font-weight:700`},staff.name.split(' ')[0])
+               :el('span',{style:'color:#ef4444;font-size:10px'},'⚠ Unassigned'),
+          c.project_value>0?el('div',{style:'font-size:11px;color:#4ade80;font-weight:600'},fmt(c.project_value)):null
+        ));
+
+        // Follow-up date
+        if(c.next_followup) card.appendChild(el('div',{style:`font-size:10px;${isOverdue?'color:#ef4444;font-weight:700':'color:#fbbf24'};margin-top:4px`},
+          (isOverdue?'⚠️ OVERDUE: ':'📅 ')+fmtDay(c.next_followup)
+        ));
+
+        // Move stage buttons
+        const moveRow = el('div',{style:'display:flex;gap:4px;margin-top:8px;flex-wrap:wrap'});
+        if(stageIdx > 0) {
+          const prevStage = KANBAN_STAGES[stageIdx-1];
+          const backBtn = el('button',{className:'btn btn-ghost btn-xs',style:'font-size:10px;padding:2px 6px',onClick:(e)=>{e.stopPropagation();moveStage(c,prevStage.value);}}, '← '+prevStage.label.replace(/^[^ ]+ /,'').substring(0,8));
+          moveRow.appendChild(backBtn);
+        }
+        if(stageIdx < KANBAN_STAGES.length-1) {
+          const nextStage = KANBAN_STAGES[stageIdx+1];
+          const fwdBtn = el('button',{className:'btn btn-primary btn-xs',style:'font-size:10px;padding:2px 6px',onClick:(e)=>{e.stopPropagation();moveStage(c,nextStage.value);}},nextStage.label.replace(/^[^ ]+ /,'').substring(0,8)+' →');
+          moveRow.appendChild(fwdBtn);
+        }
+        card.appendChild(moveRow);
+        col.appendChild(card);
+      });
+      board.appendChild(col);
+    });
+
+    scroll.appendChild(board);
+    container.appendChild(scroll);
+  }
+
+  drawBoard();
+
+  // Auto-refresh when data changes elsewhere
+  const refreshHandler = async () => {
+    const r = await api.get('/clients?limit=500');
+    if(r.ok) { clients = r.data; drawBoard(); }
+  };
+  CRM_BUS.on('data-changed', refreshHandler);
 }
 
 boot();
